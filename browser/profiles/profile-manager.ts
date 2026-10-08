@@ -349,7 +349,8 @@ export class ProfileManager {
       clockFormat: '12h',
       showWeather: true,
       showNews: true,
-      showBookmarksBar: false
+      showBookmarksBar: false,
+      adBlockerEnabled: true
     };
 
     try {
@@ -430,4 +431,5 @@ export interface ProfileSettings {
   showWeather?: boolean;
   showNews?: boolean;
   showBookmarksBar?: boolean;
+  adBlockerEnabled?: boolean;
 }

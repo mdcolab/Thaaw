@@ -4,7 +4,7 @@
  * Zero Node.js primitives or direct ipcRenderer objects are leaked to the window.
  */
 
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 const thaawAPI = {
   // Tab Management
@@ -35,7 +35,17 @@ const thaawAPI = {
   getTheme: () => ipcRenderer.invoke('theme:get'),
   setTheme: (theme: string, preset?: string) => ipcRenderer.invoke('theme:set', { theme, preset }),
   getWallpaper: () => ipcRenderer.invoke('wallpaper:get'),
-  setWallpaper: (wallpaper: string) => ipcRenderer.invoke('wallpaper:set', wallpaper),
+  setWallpaper: (wallpaper: string, options?: any) => ipcRenderer.invoke('wallpaper:set', wallpaper, options),
+  uploadCustomWallpaper: (payload: any) => ipcRenderer.invoke('wallpaper:upload-custom', payload),
+  getCustomWallpapers: () => ipcRenderer.invoke('wallpaper:get-custom-list'),
+  deleteCustomWallpaper: (id: string) => ipcRenderer.invoke('wallpaper:delete-custom', id),
+  getPathForFile: (file: any) => {
+    try {
+      return webUtils ? webUtils.getPathForFile(file) : file?.path || '';
+    } catch {
+      return file?.path || '';
+    }
+  },
 
   // History & Search History
   getHistory: (query?: string) => ipcRenderer.invoke('history:get', query),
@@ -201,8 +211,8 @@ const thaawAPI = {
     return () => ipcRenderer.removeListener('browser:theme-updated', handler);
   },
 
-  onWallpaperUpdated: (callback: (wallpaper: string) => void) => {
-    const handler = (_event: unknown, wallpaper: string) => callback(wallpaper);
+  onWallpaperUpdated: (callback: (wallpaper: string, options?: any) => void) => {
+    const handler = (_event: unknown, wallpaper: string, options?: any) => callback(wallpaper, options);
     ipcRenderer.on('browser:wallpaper-updated', handler);
     return () => ipcRenderer.removeListener('browser:wallpaper-updated', handler);
   },
@@ -1073,26 +1083,215 @@ if (isInternalThaaw) {
       });
     };
 
-    // YouTube in-stream video ad auto-skipper
-    if (location.hostname.includes('youtube.com')) {
-      const skipYouTubeAds = () => {
+    // =========================================================================
+    // Universal Ad & Video Ad Blocker Subsystem (Zero-Lag, Seamless Experience)
+    // =========================================================================
+    const initUniversalAdBlocker = async () => {
+      let isEnabled = true;
+      try {
+        const status = await ipcRenderer.invoke('adblock:get-status');
+        if (status && status.enabled === false) {
+          isEnabled = false;
+        }
+      } catch {}
+
+      if (!isEnabled) return;
+
+      // 1. YouTube Deep Player In-Memory Sanitization (Strips midrolls and prerolls at root level)
+      if (location.hostname.includes('youtube.com')) {
         try {
-          const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytp-ad-overlay-close-button') as HTMLElement | null;
-          if (skipBtn) {
-            skipBtn.click();
-          }
-          const adContainer = document.querySelector('.ad-showing, .ad-interrupting');
-          if (adContainer) {
-            const ytVideo = document.querySelector('video') as HTMLVideoElement | null;
-            if (ytVideo && !isNaN(ytVideo.duration) && isFinite(ytVideo.duration)) {
-              ytVideo.currentTime = ytVideo.duration;
-              ytVideo.muted = true;
+          const ytSanitizeScript = document.createElement('script');
+          ytSanitizeScript.id = 'thaaw-yt-sanitizer';
+          ytSanitizeScript.textContent = `(${(() => {
+            const stripAds = (obj: any): any => {
+              if (!obj || typeof obj !== 'object') return obj;
+              try {
+                if (obj.adPlacements) delete obj.adPlacements;
+                if (obj.adSlots) delete obj.adSlots;
+                if (obj.playerAds) delete obj.playerAds;
+                if (obj.adBreakHeartbeatParams) delete obj.adBreakHeartbeatParams;
+                if (obj.playerResponse) stripAds(obj.playerResponse);
+              } catch {}
+              return obj;
+            };
+
+            let _resp = (window as any).ytInitialPlayerResponse;
+            try {
+              Object.defineProperty(window, 'ytInitialPlayerResponse', {
+                configurable: true,
+                enumerable: true,
+                get: () => _resp,
+                set: (val) => { _resp = stripAds(val); }
+              });
+              if (_resp) stripAds(_resp);
+            } catch {}
+
+            const _fetch = window.fetch;
+            window.fetch = async function(...args: any[]) {
+              const res = await _fetch.apply(this, args as any);
+              try {
+                const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+                if (url.includes('/youtubei/v1/player')) {
+                  const clone = res.clone();
+                  const json = await clone.json();
+                  stripAds(json);
+                  return new Response(JSON.stringify(json), {
+                    status: res.status,
+                    statusText: res.statusText,
+                    headers: res.headers
+                  });
+                }
+              } catch {}
+              return res;
+            };
+
+            const _open = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function(this: any, method: string, url: any, ...rest: any[]) {
+              this._thaawReqUrl = url;
+              return _open.apply(this, [method, url, ...rest] as any);
+            };
+            const _send = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.send = function(this: any, ...args: any[]) {
+              if (typeof this._thaawReqUrl === 'string' && this._thaawReqUrl.includes('/youtubei/v1/player')) {
+                this.addEventListener('readystatechange', () => {
+                  if (this.readyState === 4 && this.responseText) {
+                    try {
+                      const data = JSON.parse(this.responseText);
+                      stripAds(data);
+                      Object.defineProperty(this, 'responseText', { value: JSON.stringify(data) });
+                      Object.defineProperty(this, 'response', { value: JSON.stringify(data) });
+                    } catch {}
+                  }
+                });
+              }
+              return _send.apply(this, args as any);
+            };
+          }).toString()})();`;
+          (document.head || document.documentElement || document).appendChild(ytSanitizeScript);
+          ytSanitizeScript.remove();
+        } catch {}
+
+        // YouTube 0ms In-Player Ad Neutralizer & Buffer Protector
+        let isAdActive = false;
+        let origPlaybackRate = 1;
+        let origMuted = false;
+
+        const handleYouTubeAd = () => {
+          try {
+            const moviePlayer = document.getElementById('movie_player') as any;
+            const adContainer = document.querySelector('.ad-showing, .ad-interrupting, .ytp-ad-player-overlay');
+            const video = document.querySelector('video') as HTMLVideoElement | null;
+
+            if (adContainer && video) {
+              if (!isAdActive) {
+                isAdActive = true;
+                origPlaybackRate = video.playbackRate || 1;
+                origMuted = video.muted;
+              }
+
+              // Try player built-in skipAd method
+              if (moviePlayer && typeof moviePlayer.skipAd === 'function') {
+                try { moviePlayer.skipAd(); } catch {}
+              }
+
+              // Click all possible skip buttons instantly
+              const skipButtons = document.querySelectorAll(
+                '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytp-ad-skip-button-slot, button.ytp-ad-skip-button-text, .ytp-ad-overlay-close-button, button[id^="skip-button"], .ytp-ad-preview-container, .ytp-ad-overlay-close-container'
+              );
+              skipButtons.forEach((btn) => {
+                try { (btn as HTMLElement).click(); } catch {}
+              });
+
+              // Fast-forward ad stream without seeking into unbuffered duration to eliminate buffer stalls/lag
+              video.muted = true;
+              video.playbackRate = 16.0;
+              if (!isNaN(video.duration) && isFinite(video.duration) && video.duration > 0) {
+                const target = Math.max(0, video.duration - 0.1);
+                if (video.currentTime < target) {
+                  video.currentTime = target;
+                }
+              }
+              if (video.paused) {
+                video.play().catch(() => {});
+              }
+            } else if (isAdActive) {
+              // Ad segment concluded — instantly restore user speed/mute and guarantee uninterrupted playback
+              isAdActive = false;
+              if (video) {
+                video.playbackRate = origPlaybackRate || 1;
+                video.muted = origMuted;
+                if (video.paused) {
+                  video.play().catch(() => {});
+                }
+              }
             }
+          } catch {}
+        };
+
+        // Real-time MutationObserver on player for 0ms reaction
+        const attachYtPlayerObserver = () => {
+          const container = document.getElementById('movie_player') || document.querySelector('.html5-video-player') || document.body;
+          if (container) {
+            const obs = new MutationObserver(() => handleYouTubeAd());
+            obs.observe(container, {
+              attributes: true,
+              attributeFilter: ['class'],
+              childList: true,
+              subtree: true
+            });
           }
+        };
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', attachYtPlayerObserver, { once: true });
+        } else {
+          attachYtPlayerObserver();
+        }
+
+        document.addEventListener('timeupdate', (e) => {
+          if ((e.target as HTMLElement)?.tagName === 'VIDEO') handleYouTubeAd();
+        }, true);
+        document.addEventListener('play', (e) => {
+          if ((e.target as HTMLElement)?.tagName === 'VIDEO') handleYouTubeAd();
+        }, true);
+        setInterval(handleYouTubeAd, 200);
+      }
+
+      // 2. Universal Article & In-Stream Video Ad Neutralizer (All Sites, News & Articles)
+      const cleanArticleAndVideoAds = () => {
+        try {
+          // Remove intrusive floating video ad players & widgets from news/article sites
+          const floaters = document.querySelectorAll(
+            '[id*="connatix"], .connatix-container, [id*="primis"], .primis-player, [id*="anyclip"], .anyclip-widget, .teads-inread, [id*="vdo_ai"], div[class*="floating-video-ad"], div[class*="sticky-video-ad"], .trc_related_container, .OUTBRAIN, .mgid-widget, .rc-placeholder, div[class*="ezoic-ad"], div[class*="mediavine"], div[class*="adthrive"]'
+          );
+          floaters.forEach(el => {
+            const v = el.querySelector('video');
+            if (v) {
+              v.muted = true;
+              v.pause();
+            }
+            (el as HTMLElement).style.setProperty('display', 'none', 'important');
+          });
+
+          // Programmatically click standard VAST / IMA / video ad skip buttons across web players
+          const skipBtns = document.querySelectorAll(
+            '.videoAdUiSkipButton, .vast-skip-button, .ima-skip-button, [aria-label*="Skip Ad" i], [title*="Skip Ad" i], .videoAdUiAction'
+          );
+          skipBtns.forEach(btn => {
+            try { (btn as HTMLElement).click(); } catch {}
+          });
         } catch {}
       };
-      setInterval(skipYouTubeAds, 500);
-    }
+
+      const articleObs = new MutationObserver(() => cleanArticleAndVideoAds());
+      const bodyTarget = document.body || document.documentElement;
+      if (bodyTarget) {
+        articleObs.observe(bodyTarget, { childList: true, subtree: true });
+      }
+      cleanArticleAndVideoAds();
+    };
+
+    initUniversalAdBlocker();
 
     let videoAttachTimer: any = null;
     const scheduleAttachVideoControls = () => {

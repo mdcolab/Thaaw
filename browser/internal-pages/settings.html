@@ -670,6 +670,18 @@
         <div class="settings-card">
           <div class="setting-row">
             <div class="setting-info">
+              <div class="setting-label">Do you want to turn on Ad Blocker?</div>
+              <div class="setting-description">Blocks video midrolls, intrusive banners, and promotional trackers across all sites and articles</div>
+            </div>
+            <div class="setting-control">
+              <label class="switch">
+                <input type="checkbox" id="privacyAdblockToggle" checked onchange="toggleAdBlockerGlobal(this.checked)" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
               <div class="setting-label">THAAW Shield Protection Tier</div>
               <div class="setting-description">Balanced blocks cross-site trackers; Strict adds fingerprint protection</div>
             </div>
@@ -1127,18 +1139,17 @@
         
         <!-- Ad Blocker Engine Card -->
         <div class="settings-card">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
-            <div style="display: flex; align-items: center; gap: 10px;">
-              <span data-icon="shield-check" data-icon-size="22" style="color: var(--thaaw-cyan);"></span>
-              <div>
-                <h3 style="margin: 0; font-size: 15px; font-weight: 600; color: var(--thaaw-text);">Native Ad Blocker Engine</h3>
-                <p style="margin: 2px 0 0; font-size: 12px; color: var(--thaaw-text-muted);">High-performance network blocking and cosmetic filtering</p>
-              </div>
+          <div class="setting-row" style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: var(--thaaw-radius-md); padding: 14px 16px; margin-bottom: 16px;">
+            <div class="setting-info">
+              <div class="setting-label" style="font-size: 15px; font-weight: 600; color: var(--thaaw-text);">Do you want to turn on Ad Blocker?</div>
+              <div class="setting-description" style="color: var(--thaaw-text-muted);">High-performance network blocking, video midroll suppression, and cosmetic article filtering</div>
             </div>
-            <label class="switch">
-              <input type="checkbox" id="adblockGlobalToggle" checked onchange="toggleAdBlockerGlobal(this.checked)" />
-              <span class="slider"></span>
-            </label>
+            <div class="setting-control">
+              <label class="switch">
+                <input type="checkbox" id="adblockGlobalToggle" checked onchange="toggleAdBlockerGlobal(this.checked)" />
+                <span class="slider"></span>
+              </label>
+            </div>
           </div>
 
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px;">
@@ -1148,18 +1159,18 @@
             </div>
             <div style="background: var(--thaaw-surface-hover); padding: 12px 14px; border-radius: var(--thaaw-radius-md); border: 1px solid var(--thaaw-border);">
               <div style="font-size: 11px; color: var(--thaaw-text-muted); text-transform: uppercase; font-weight: 600;">Engine Status</div>
-              <div style="font-size: 14px; font-weight: 600; color: var(--thaaw-success); margin-top: 8px;">Active &bull; Filtering</div>
+              <div id="adblockEngineStatusText" style="font-size: 14px; font-weight: 600; color: var(--thaaw-success); margin-top: 8px;">Active &bull; Filtering</div>
             </div>
             <div style="background: var(--thaaw-surface-hover); padding: 12px 14px; border-radius: var(--thaaw-radius-md); border: 1px solid var(--thaaw-border);">
               <div style="font-size: 11px; color: var(--thaaw-text-muted); text-transform: uppercase; font-weight: 600;">Filter Rules</div>
-              <div style="font-size: 14px; font-weight: 600; color: var(--thaaw-text); margin-top: 8px;">150+ Domains & CSS</div>
+              <div style="font-size: 14px; font-weight: 600; color: var(--thaaw-text); margin-top: 8px;">250+ Domains & CSS</div>
             </div>
           </div>
 
           <div class="setting-row">
             <div class="setting-info">
-              <div class="setting-label">YouTube Video Ad Auto-Skipper</div>
-              <div class="setting-description">Automatically detects and fast-forwards through non-skippable and skippable YouTube ads</div>
+              <div class="setting-label">YouTube Video Ad Auto-Skipper & Buffer Protector</div>
+              <div class="setting-description">Automatically neutralizes in-stream video ads without pause, lag, or buffering stalls</div>
             </div>
             <div class="setting-control">
               <label class="switch">
@@ -1172,7 +1183,7 @@
           <div class="setting-row">
             <div class="setting-info">
               <div class="setting-label">Cosmetic Element Hiding</div>
-              <div class="setting-description">Hides empty ad placeholder containers, promotional banners, and sticky overlays</div>
+              <div class="setting-description">Hides empty ad placeholder containers, promotional banners, floating video players, and article overlays</div>
             </div>
             <div class="setting-control">
               <label class="switch">
@@ -1247,7 +1258,19 @@
         if (window.thaawAPI?.toggleAdBlocker) {
           await window.thaawAPI.toggleAdBlocker(enabled);
         }
-        showToast(enabled ? 'Native Ad Blocker enabled.' : 'Native Ad Blocker paused.');
+        if (window.thaawAPI?.updateSettings) {
+          await window.thaawAPI.updateSettings({ adBlockerEnabled: enabled });
+        }
+        const t1 = document.getElementById('adblockGlobalToggle');
+        const t2 = document.getElementById('privacyAdblockToggle');
+        if (t1) t1.checked = enabled;
+        if (t2) t2.checked = enabled;
+        const statusText = document.getElementById('adblockEngineStatusText');
+        if (statusText) {
+          statusText.textContent = enabled ? 'Active • Filtering' : 'Paused';
+          statusText.style.color = enabled ? 'var(--thaaw-success)' : 'var(--thaaw-text-muted)';
+        }
+        showToast(enabled ? 'Ad Blocker turned on.' : 'Ad Blocker turned off.');
         refreshAdblockStats();
       } catch {
         showToast('Ad blocker setting updated.');
@@ -1262,9 +1285,16 @@
           if (totalEl && status?.totalBlockedCount !== undefined) {
             totalEl.textContent = status.totalBlockedCount.toLocaleString();
           }
-          const toggle = document.getElementById('adblockGlobalToggle');
-          if (toggle && status?.enabled !== undefined) {
-            toggle.checked = status.enabled;
+          const t1 = document.getElementById('adblockGlobalToggle');
+          const t2 = document.getElementById('privacyAdblockToggle');
+          if (status?.enabled !== undefined) {
+            if (t1) t1.checked = status.enabled;
+            if (t2) t2.checked = status.enabled;
+            const statusText = document.getElementById('adblockEngineStatusText');
+            if (statusText) {
+              statusText.textContent = status.enabled ? 'Active • Filtering' : 'Paused';
+              statusText.style.color = status.enabled ? 'var(--thaaw-success)' : 'var(--thaaw-text-muted)';
+            }
           }
         }
       } catch {}
@@ -1865,11 +1895,17 @@
       if (!container) return;
       container.innerHTML = '';
       const activeWp = localStorage.getItem('thaaw_active_wallpaper') || 'default';
+      const cleanActive = String(activeWp || '').replace(/^thaaw-/, '').replace(/\.webp$/, '');
       const list = WALLPAPERS_30.filter(w => currentSettingsWpFilter === 'all' || w.mode === currentSettingsWpFilter);
 
       list.forEach(wp => {
+        const cleanWp = wp.id.replace(/^thaaw-/, '').replace(/\.webp$/, '');
+        const isMatch = (
+          cleanWp === cleanActive ||
+          ((!activeWp || activeWp === 'default') && wp.id === 'midnight-mountains')
+        );
         const card = document.createElement('div');
-        card.className = `wallpaper-card-15 ${activeWp === wp.id ? 'active' : ''}`;
+        card.className = `wallpaper-card-15 ${isMatch ? 'active' : ''}`;
         card.dataset.wallpaperId = wp.id;
         card.dataset.mode = wp.mode;
         card.title = `${wp.name} (${wp.mode})`;
@@ -1881,7 +1917,7 @@
               <span class="mini-dot green"></span>
               <span class="mini-address-pill"></span>
             </div>
-            <img class="wallpaper-thumb-img" src="../assets/wallpapers/${wp.thumb}" alt="${wp.name}" loading="lazy" />
+            <img class="wallpaper-thumb-img" src="${window.location.protocol === 'thaaw:' ? 'thaaw://wallpapers/' + wp.thumb : '../../assets/wallpapers/' + wp.thumb}" alt="${wp.name}" loading="lazy" />
           </div>
           <div class="wallpaper-title-overlay">${wp.name}</div>
         `;
@@ -1900,10 +1936,20 @@
       renderSettingsWallpapers();
     }
 
-    function applySettingsWallpaper(wpId) {
-      localStorage.setItem('thaaw_active_wallpaper', wpId);
+    async function applySettingsWallpaper(wpId) {
+      try { localStorage.setItem('thaaw_active_wallpaper', wpId); } catch (_) {}
+      if (window.thaawAPI && window.thaawAPI.setWallpaper) {
+        await window.thaawAPI.setWallpaper(wpId);
+      }
+      const cleanWp = String(wpId || '').replace(/^thaaw-/, '').replace(/\.webp$/, '');
+      const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
       document.querySelectorAll('#settingsWallpaperGrid .wallpaper-card-15').forEach(card => {
-        card.classList.toggle('active', card.dataset.wallpaperId === wpId);
+        const cId = (card.dataset.wallpaperId || '').replace(/^thaaw-/, '').replace(/\.webp$/, '');
+        const isMatch = (
+          cId === cleanWp ||
+          ((!wpId || wpId === 'default') && (currentTheme === 'light' ? cId === 'light-13' : cId === 'midnight-mountains'))
+        );
+        card.classList.toggle('active', !!isMatch);
       });
       showToast(wpId === 'none' ? 'Wallpaper set to solid background.' : wpId === 'default' ? 'Wallpaper reset to default.' : 'Wallpaper applied.');
     }
@@ -1913,6 +1959,20 @@
       loadProfiles();
       loadAuth();
       renderSettingsWallpapers();
+      if (window.thaawAPI?.getWallpaper) {
+        window.thaawAPI.getWallpaper().then(wp => {
+          if (wp) {
+            try { localStorage.setItem('thaaw_active_wallpaper', wp); } catch (_) {}
+            renderSettingsWallpapers();
+          }
+        }).catch(() => {});
+      }
+      window.thaawAPI?.onWallpaperUpdated?.((wp) => {
+        if (wp) {
+          try { localStorage.setItem('thaaw_active_wallpaper', wp); } catch (_) {}
+          renderSettingsWallpapers();
+        }
+      });
       if (window.thaawAPI?.getTheme) {
         window.thaawAPI.getTheme().then(t => {
           if (t) selectThemePreset(t.theme, t.preset || 'midnight');

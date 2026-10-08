@@ -1,17 +1,27 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" data-theme-preset="midnight">
+<html lang="en" class="inside-thaaw-chrome newtab-page" data-theme="dark" data-theme-preset="midnight">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>New Tab — THAAW</title>
+  <style>
+    html, body, .newtab-body {
+      background: transparent !important;
+      background-color: transparent !important;
+    }
+  </style>
   <link rel="stylesheet" href="internal.css">
   <script src="icons.js"></script>
   <script src="favicon-resolver.js"></script>
 </head>
-<body class="newtab-body">
-  <!-- Immersive Fullscreen Wallpaper Layer (Static Image & Live Video) -->
-  <div id="wallpaperLayer" class="newtab-wallpaper-layer default-bg"></div>
-  <video id="wallpaperVideo" class="newtab-video-wallpaper" autoplay loop muted playsinline style="display: none;"></video>
+<body class="newtab-body inside-thaaw-chrome">
+  <!-- Immersive Fullscreen Wallpaper Layer (Delegated to Browser Background Layer) -->
+  <div id="wallpaperContainer" class="newtab-wallpaper-container" style="display: none !important;">
+    <div id="wallpaperLayer" class="newtab-wallpaper-layer active"></div>
+    <div id="wallpaperLayerIncoming" class="newtab-wallpaper-layer incoming" style="display: none; opacity: 0;"></div>
+    <video id="wallpaperVideo" class="newtab-video-wallpaper" autoplay loop muted playsinline style="display: none;"></video>
+    <video id="wallpaperVideoIncoming" class="newtab-video-wallpaper" autoplay loop muted playsinline style="display: none;"></video>
+  </div>
   <div id="wallpaperOverlay" class="newtab-wallpaper-overlay"></div>
 
   <!-- Left Navigation Rail (Faithful to Reference Screenshots) -->
@@ -39,11 +49,9 @@
         <span>A CLEANER</span>
         <span>A FREER WEB</span>
       </div>
+      <div class="newtab-watermark" aria-hidden="true">BUILT BY MD COLAB</div>
     </div>
   </nav>
-
-  <!-- Bottom-Right Branding Watermark (Matching Reference) -->
-  <div class="newtab-watermark" aria-hidden="true">BUILT BY MD COLAB</div>
 
   <!-- Main Viewport Content -->
   <main class="newtab-viewport">
@@ -210,8 +218,9 @@
   <!-- Floating Cloud Capsule: Live Weather, Location, Clock & Shield Status (Fixed in Bottom-Right Corner) -->
   <aside id="floatingCloudWidget" class="floating-cloud-widget" aria-label="Live Weather and System Info">
     <div id="infoSection" class="cloud-capsule-glass">
+
       <!-- Weather Info -->
-      <div class="cloud-weather-cluster">
+      <div id="weatherWidgetCard" class="cloud-weather-cluster">
         <div class="cloud-weather-icon-box">
           <span id="weatherIconSlot" data-icon="cloud-sun" data-icon-size="20"></span>
         </div>
@@ -227,15 +236,15 @@
         </div>
       </div>
 
-      <div class="cloud-divider"></div>
+      <div id="weatherClockDivider" class="cloud-divider"></div>
 
       <!-- Clock & Date -->
-      <div class="cloud-clock-cluster">
+      <div id="clockWidgetCard" class="cloud-clock-cluster">
         <div id="liveClock" class="cloud-clock">12:38</div>
         <div id="liveDate" class="cloud-date">Mon, 21 Sept</div>
       </div>
 
-      <div class="cloud-divider"></div>
+      <div id="clockShieldDivider" class="cloud-divider"></div>
 
       <!-- Shield Status -->
       <div id="shieldWidgetCard" class="cloud-shield-pill" title="THAAW Shield Active">
@@ -253,141 +262,78 @@
     <aside class="customize-drawer" role="dialog" aria-label="Customize THAAW" aria-modal="true">
       <div class="drawer-header">
         <div class="drawer-header-left">
-          <h2>
-            <span data-icon="sliders" data-icon-size="18" style="color: var(--thaaw-cyan);"></span>
-            <span>Theme & Customization</span>
-          </h2>
-          <span class="drawer-subtitle">Personalize your visual workspace</span>
+          <div class="drawer-badge-chip">
+            <span data-icon="sparkles" data-icon-size="12"></span>
+            <span>THAAW STUDIO</span>
+          </div>
+          <h2>Customize Workspace</h2>
+          <span class="drawer-subtitle">Themes, Wallpapers, Transitions &amp; Optics</span>
         </div>
-        <button id="closeDrawerBtn" class="btn-icon" aria-label="Close customization panel">
-          <span data-icon="x" data-icon-size="18"></span>
-        </button>
+        <div class="drawer-header-actions">
+          <div class="drawer-active-pill" id="drawerActivePill" title="Active Theme Preset">
+            <span class="active-dot"></span>
+            <span id="activePresetLabel">Midnight</span>
+          </div>
+          <button id="closeDrawerBtn" class="drawer-close-btn" aria-label="Close customization panel" title="Close (Esc)">
+            <span data-icon="x" data-icon-size="16"></span>
+            <kbd class="kbd-tag">ESC</kbd>
+          </button>
+        </div>
       </div>
 
       <!-- Segmented Navigation Tabs -->
       <div class="drawer-nav-tabs" role="tablist" aria-label="Customization categories">
-        <button type="button" class="drawer-nav-tab active" data-tab="themes" role="tab">Themes</button>
-        <button type="button" class="drawer-nav-tab" data-tab="wallpapers" role="tab">Wallpapers</button>
-        <button type="button" class="drawer-nav-tab" data-tab="studio" role="tab">Studio & Effects</button>
+        <button type="button" class="drawer-nav-tab active" data-tab="wallpapers" role="tab" id="tabNavWallpapers">
+          <span data-icon="image" data-icon-size="14"></span>
+          <span>Wallpapers</span>
+          <span class="tab-badge">30</span>
+        </button>
+        <button type="button" class="drawer-nav-tab" data-tab="transitions" role="tab" id="tabNavTransitions">
+          <span data-icon="zap" data-icon-size="14"></span>
+          <span>Transitions</span>
+          <span class="tab-badge new-badge">FX</span>
+        </button>
+        <button type="button" class="drawer-nav-tab" data-tab="themes" role="tab" id="tabNavThemes">
+          <span data-icon="palette" data-icon-size="14"></span>
+          <span>Themes</span>
+          <span class="tab-badge">8</span>
+        </button>
+        <button type="button" class="drawer-nav-tab" data-tab="studio" role="tab" id="tabNavStudio">
+          <span data-icon="sliders" data-icon-size="14"></span>
+          <span>Canvas &amp; UI</span>
+        </button>
       </div>
 
       <div class="drawer-content">
-        <!-- TAB 1: THEMES -->
-        <div id="tabThemesPane" class="drawer-tab-pane active">
-          <!-- SECTION 1: DARK THEMES -->
-          <div class="drawer-section">
-          <div class="drawer-section-title">Dark Themes (4 Presets)</div>
-          <div class="preset-grid" id="darkThemesGrid">
-            <div class="preset-card active" data-theme="dark" data-preset="midnight">
-              <div class="preset-card-header">
-                <span class="preset-name">THAAW Midnight</span>
-                <div class="preset-swatches">
-                  <span class="preset-swatch" style="background: #07111F;"></span>
-                  <span class="preset-swatch" style="background: #38BDF8;"></span>
-                  <span class="preset-swatch" style="background: #FF6FF0;"></span>
-                </div>
+        <!-- TAB 1: WALLPAPERS -->
+        <div id="tabWallpapersPane" class="drawer-tab-pane active">
+          <!-- Quick Transition Shortcut Banner -->
+          <div class="wallpaper-transition-banner" id="wallpaperTransitionBanner">
+            <div class="transition-banner-left">
+              <span class="transition-banner-icon"><span data-icon="zap" data-icon-size="14"></span></span>
+              <div class="transition-banner-text">
+                <span class="transition-banner-label">Active Transition:</span>
+                <strong class="transition-banner-name" id="activeTransitionName">Smooth Crossfade</strong>
               </div>
-              <span class="preset-desc">Original signature navy with cyan & pink accents</span>
             </div>
-            <div class="preset-card" data-theme="dark" data-preset="deep-space">
-              <div class="preset-card-header">
-                <span class="preset-name">THAAW Deep Space</span>
-                <div class="preset-swatches">
-                  <span class="preset-swatch" style="background: #030712;"></span>
-                  <span class="preset-swatch" style="background: #818CF8;"></span>
-                  <span class="preset-swatch" style="background: #C084FC;"></span>
-                </div>
-              </div>
-              <span class="preset-desc">Ultra deep space void with cosmic indigo</span>
-            </div>
-            <div class="preset-card" data-theme="dark" data-preset="obsidian">
-              <div class="preset-card-header">
-                <span class="preset-name">THAAW Obsidian</span>
-                <div class="preset-swatches">
-                  <span class="preset-swatch" style="background: #0F1117;"></span>
-                  <span class="preset-swatch" style="background: #34D399;"></span>
-                  <span class="preset-swatch" style="background: #6EE7B7;"></span>
-                </div>
-              </div>
-              <span class="preset-desc">Volcanic basalt black with emerald highlights</span>
-            </div>
-            <div class="preset-card" data-theme="dark" data-preset="eclipse">
-              <div class="preset-card-header">
-                <span class="preset-name">THAAW Eclipse</span>
-                <div class="preset-swatches">
-                  <span class="preset-swatch" style="background: #120E16;"></span>
-                  <span class="preset-swatch" style="background: #FB7185;"></span>
-                  <span class="preset-swatch" style="background: #F43F5E;"></span>
-                </div>
-              </div>
-              <span class="preset-desc">Solar corona purple and rose gold</span>
-            </div>
+            <button type="button" id="openTransitionsTabBtn" class="btn-transition-switch" title="Configure transition effect">
+              <span>Change Effect</span>
+              <span data-icon="arrow-right" data-icon-size="11"></span>
+            </button>
           </div>
-        </div>
 
-        <!-- SECTION 2: LIGHT THEMES -->
-        <div class="drawer-section">
-          <div class="drawer-section-title">Light Themes (4 Presets)</div>
-          <div class="preset-grid" id="lightThemesGrid">
-            <div class="preset-card" data-theme="light" data-preset="white">
-              <div class="preset-card-header">
-                <span class="preset-name">THAAW White</span>
-                <div class="preset-swatches">
-                  <span class="preset-swatch" style="background: #F8FAFC;"></span>
-                  <span class="preset-swatch" style="background: #0284C7;"></span>
-                  <span class="preset-swatch" style="background: #D946EF;"></span>
-                </div>
-              </div>
-              <span class="preset-desc">Crisp, luminous clean slate</span>
-            </div>
-            <div class="preset-card" data-theme="light" data-preset="frost">
-              <div class="preset-card-header">
-                <span class="preset-name">THAAW Frost</span>
-                <div class="preset-swatches">
-                  <span class="preset-swatch" style="background: #F1F5F9;"></span>
-                  <span class="preset-swatch" style="background: #0EA5E9;"></span>
-                  <span class="preset-swatch" style="background: #38BDF8;"></span>
-                </div>
-              </div>
-              <span class="preset-desc">Glacial cool blue atmospheric mist</span>
-            </div>
-            <div class="preset-card" data-theme="light" data-preset="pearl">
-              <div class="preset-card-header">
-                <span class="preset-name">THAAW Pearl</span>
-                <div class="preset-swatches">
-                  <span class="preset-swatch" style="background: #FAF9F6;"></span>
-                  <span class="preset-swatch" style="background: #D97706;"></span>
-                  <span class="preset-swatch" style="background: #B45309;"></span>
-                </div>
-              </div>
-              <span class="preset-desc">Warm mineral ivory with amber notes</span>
-            </div>
-            <div class="preset-card" data-theme="light" data-preset="cloud">
-              <div class="preset-card-header">
-                <span class="preset-name">THAAW Cloud</span>
-                <div class="preset-swatches">
-                  <span class="preset-swatch" style="background: #F3F4F6;"></span>
-                  <span class="preset-swatch" style="background: #6366F1;"></span>
-                  <span class="preset-swatch" style="background: #8B5CF6;"></span>
-                </div>
-              </div>
-              <span class="preset-desc">Soft overcast lavender morning tone</span>
-            </div>
-          </div>
-        </div><!-- /#tabThemesPane -->
-
-        <!-- TAB 2: WALLPAPERS -->
-        <div id="tabWallpapersPane" class="drawer-tab-pane">
-          <!-- SECTION 3: WALLPAPERS GALLERY & MY WALLPAPERS -->
           <div class="drawer-section">
-            <div class="drawer-section-title">Wallpapers Gallery</div>
+            <div class="drawer-section-title">
+              <span>Wallpapers Gallery</span>
+              <span class="drawer-section-count">30 Curated</span>
+            </div>
             <div class="wallpaper-filter-tabs" role="tablist" aria-label="Filter wallpapers by mode">
               <button type="button" class="filter-tab active" data-filter="all" role="tab">All (30)</button>
               <button type="button" class="filter-tab" data-filter="dark" role="tab">Dark (15)</button>
               <button type="button" class="filter-tab" data-filter="light" role="tab">Light (15)</button>
               <button type="button" class="filter-tab" data-filter="my" role="tab">
                 <span data-icon="image" data-icon-size="12"></span>
-                <span>My Wallpapers</span>
+                <span>My Collection</span>
               </button>
             </div>
 
@@ -407,7 +353,14 @@
                 <div class="dropzone-text-group">
                   <strong>Upload Wallpaper or Live Video</strong>
                   <span>Drop your image or video loop here, or browse</span>
-                  <span class="dropzone-formats">Supports MP4, WEBM, JPG, PNG, WEBP, GIF</span>
+                  <div class="dropzone-formats-chips">
+                    <span class="format-chip">MP4</span>
+                    <span class="format-chip">WEBM</span>
+                    <span class="format-chip">JPG</span>
+                    <span class="format-chip">PNG</span>
+                    <span class="format-chip">WEBP</span>
+                    <span class="format-chip">GIF</span>
+                  </div>
                 </div>
                 <button type="button" id="browseWallpaperBtn" class="btn btn-primary btn-sm">
                   <span data-icon="folder-plus" data-icon-size="13"></span>
@@ -428,24 +381,152 @@
             </div>
 
             <div class="wallpaper-actions-row">
-              <button type="button" id="applyWallpaperBtn" class="btn btn-primary btn-sm" style="flex: 1;">Apply</button>
-              <button type="button" id="removeWallpaperBtn" class="btn btn-secondary btn-sm">None</button>
-              <button type="button" id="resetWallpaperBtn" class="btn btn-secondary btn-sm">Reset</button>
+              <button type="button" id="applyWallpaperBtn" class="btn btn-primary btn-sm" style="flex: 1.4;">
+                <span data-icon="check" data-icon-size="13"></span>
+                <span>Apply Wallpaper</span>
+              </button>
+              <button type="button" id="removeWallpaperBtn" class="btn btn-secondary btn-sm" title="Solid color background">
+                <span>Solid (None)</span>
+              </button>
+              <button type="button" id="resetWallpaperBtn" class="btn btn-secondary btn-sm" title="Reset default wallpaper">
+                <span data-icon="refresh-cw" data-icon-size="12"></span>
+                <span>Reset</span>
+              </button>
+            </div>
+          </div>
+        </div><!-- /#tabWallpapersPane -->
+
+        <!-- TAB 2: TRANSITIONS & MOTION (NEW DEDICATED SELECTOR) -->
+        <div id="tabTransitionsPane" class="drawer-tab-pane">
+          <div class="drawer-section">
+            <div class="drawer-section-title">
+              <span>Wallpaper Transition Selector</span>
+              <span class="badge-tag">Fluid Motion</span>
+            </div>
+            <p class="section-desc-note">Choose the visual animation effect when transitioning between wallpapers or during automated slideshows.</p>
+
+            <!-- Transition Effect Selector Grid -->
+            <div class="transition-grid" id="transitionGrid">
+              <div class="transition-card active" data-transition="crossfade">
+                <div class="transition-card-header">
+                  <div class="transition-card-icon"><span data-icon="layers" data-icon-size="16"></span></div>
+                  <span class="transition-card-badge">Default</span>
+                </div>
+                <div class="transition-card-title">Smooth Crossfade</div>
+                <div class="transition-card-desc">Silky seamless optical dissolve between wallpapers</div>
+              </div>
+
+              <div class="transition-card" data-transition="zoom">
+                <div class="transition-card-header">
+                  <div class="transition-card-icon"><span data-icon="maximize" data-icon-size="16"></span></div>
+                  <span class="transition-card-badge">Cinematic</span>
+                </div>
+                <div class="transition-card-title">Ken Burns Zoom</div>
+                <div class="transition-card-desc">Dynamic depth zoom scale &amp; gentle drift crossfade</div>
+              </div>
+
+              <div class="transition-card" data-transition="slide-left">
+                <div class="transition-card-header">
+                  <div class="transition-card-icon"><span data-icon="arrow-right" data-icon-size="16"></span></div>
+                  <span class="transition-card-badge">Dynamic</span>
+                </div>
+                <div class="transition-card-title">Slide Horizontal</div>
+                <div class="transition-card-desc">Panoramic curtain wipe sliding from right to left</div>
+              </div>
+
+              <div class="transition-card" data-transition="slide-right">
+                <div class="transition-card-header">
+                  <div class="transition-card-icon"><span data-icon="arrow-left" data-icon-size="16"></span></div>
+                  <span class="transition-card-badge">Dynamic</span>
+                </div>
+                <div class="transition-card-title">Slide Reverse</div>
+                <div class="transition-card-desc">Smooth curtain wipe sliding from left to right</div>
+              </div>
+
+              <div class="transition-card" data-transition="slide-up">
+                <div class="transition-card-header">
+                  <div class="transition-card-icon"><span data-icon="chevron-down" data-icon-size="16" style="transform: rotate(180deg); display: inline-flex;"></span></div>
+                  <span class="transition-card-badge">Dramatic</span>
+                </div>
+                <div class="transition-card-title">Slide Upward</div>
+                <div class="transition-card-desc">Vertical rising transition with perspective fade</div>
+              </div>
+
+              <div class="transition-card" data-transition="blur">
+                <div class="transition-card-header">
+                  <div class="transition-card-icon"><span data-icon="feather" data-icon-size="16"></span></div>
+                  <span class="transition-card-badge">Dreamy</span>
+                </div>
+                <div class="transition-card-title">Blur Dissolve</div>
+                <div class="transition-card-desc">Optical defocus dissolve resolving into crisp clarity</div>
+              </div>
+
+              <div class="transition-card" data-transition="flash">
+                <div class="transition-card-header">
+                  <div class="transition-card-icon"><span data-icon="sparkles" data-icon-size="16"></span></div>
+                  <span class="transition-card-badge">Radiant</span>
+                </div>
+                <div class="transition-card-title">Flash Bloom</div>
+                <div class="transition-card-desc">Atmospheric soft luminous bloom burst transition</div>
+              </div>
+
+              <div class="transition-card" data-transition="none">
+                <div class="transition-card-header">
+                  <div class="transition-card-icon"><span data-icon="zap" data-icon-size="16"></span></div>
+                  <span class="transition-card-badge">Snappy</span>
+                </div>
+                <div class="transition-card-title">Instant Cut</div>
+                <div class="transition-card-desc">Immediate cut with zero transition latency</div>
+              </div>
             </div>
 
-            <!-- Wallpaper Slideshow Option -->
-            <div class="slideshow-container" style="margin-top: 14px; padding: 12px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--thaaw-border); border-radius: 10px;">
-              <div style="display: flex; align-items: center; justify-content: space-between;">
-                <span style="font-size: 12.5px; font-weight: 600; color: var(--thaaw-text);">Wallpaper Slideshow</span>
+            <!-- Transition Speed Selector -->
+            <div class="transition-speed-section" style="margin-top: 14px;">
+              <div class="range-label-row">
+                <span>Transition Duration</span>
+                <span id="transitionSpeedLabel" style="color: var(--thaaw-cyan); font-weight: 600;">700ms (Natural)</span>
+              </div>
+              <div class="duration-pill-group" id="transitionDurationPills">
+                <button type="button" class="duration-pill" data-duration="350">Fast (350ms)</button>
+                <button type="button" class="duration-pill active" data-duration="700">Natural (700ms)</button>
+                <button type="button" class="duration-pill" data-duration="1200">Cinematic (1.2s)</button>
+              </div>
+            </div>
+
+            <!-- Interactive Live Test / Preview Button -->
+            <div style="margin-top: 12px;">
+              <button type="button" id="previewTransitionBtn" class="btn btn-primary" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                <span data-icon="play" data-icon-size="14"></span>
+                <span>Test Transition Live on Screen</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- SECTION: AUTOMATED SLIDESHOW -->
+          <div class="drawer-section" style="margin-top: 8px;">
+            <div class="drawer-section-title">
+              <span>Wallpaper Slideshow Engine</span>
+              <span class="badge-tag">Automation</span>
+            </div>
+            <div class="slideshow-container">
+              <div class="toggle-card">
+                <div class="toggle-card-info">
+                  <div class="toggle-card-icon"><span data-icon="refresh-cw" data-icon-size="16"></span></div>
+                  <div>
+                    <strong style="display:block; font-size:12.5px; color:var(--thaaw-text);">Auto Slideshow</strong>
+                    <span style="font-size:11px; color:var(--thaaw-text-muted);">Cycle wallpapers with chosen transition</span>
+                  </div>
+                </div>
                 <label class="switch">
                   <input type="checkbox" id="toggleSlideshow" />
                   <span class="slider"></span>
                 </label>
               </div>
-              <div id="slideshowControlsRow" class="hidden" style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; color: var(--thaaw-text-muted);">
+
+              <div id="slideshowControlsRow" class="hidden" style="margin-top: 10px; display: flex; flex-direction: column; gap: 10px;">
+                <div class="slideshow-option-row">
                   <span>Display duration:</span>
-                  <select id="slideshowInterval" style="background: rgba(255, 255, 255, 0.08); border: 1px solid var(--thaaw-border); border-radius: 6px; color: var(--thaaw-text); padding: 4px 8px; font-size: 11.5px; outline: none; cursor: pointer;">
+                  <select id="slideshowInterval" class="custom-select">
                     <option value="10000">10 seconds</option>
                     <option value="30000">30 seconds</option>
                     <option value="60000" selected>1 minute</option>
@@ -454,155 +535,375 @@
                     <option value="3600000">1 hour</option>
                   </select>
                 </div>
-                <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; color: var(--thaaw-text-muted);">
+                <div class="slideshow-option-row">
                   <span>Image collection:</span>
-                  <select id="slideshowModeSelect" style="background: rgba(255, 255, 255, 0.08); border: 1px solid var(--thaaw-border); border-radius: 6px; color: var(--thaaw-text); padding: 4px 8px; font-size: 11.5px; outline: none; cursor: pointer;">
+                  <select id="slideshowModeSelect" class="custom-select">
                     <option value="theme" selected>Match Current Theme</option>
                     <option value="all">All 30 Curated Wallpapers</option>
                     <option value="dark">Dark Wallpapers Only</option>
                     <option value="light">Light Wallpapers Only</option>
                   </select>
                 </div>
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 2px;">
-                  <span style="font-size: 10.5px; color: var(--thaaw-cyan);">Slideshow active</span>
-                  <button type="button" id="slideshowNextBtn" class="btn btn-secondary btn-sm" style="font-size: 10.5px; padding: 2px 8px;">Next Now</button>
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 4px;">
+                  <span style="font-size: 11px; color: var(--thaaw-cyan); display: flex; align-items: center; gap: 4px;">
+                    <span class="pulse-dot"></span> Slideshow active
+                  </span>
+                  <button type="button" id="slideshowNextBtn" class="btn btn-secondary btn-sm" style="font-size: 11px; padding: 4px 10px;">
+                    <span data-icon="arrow-right" data-icon-size="12"></span>
+                    <span>Next Wallpaper</span>
+                  </button>
                 </div>
               </div>
             </div>
+          </div>
+        </div><!-- /#tabTransitionsPane -->
+
+        <!-- TAB 3: THEMES -->
+        <div id="tabThemesPane" class="drawer-tab-pane">
+          <!-- SECTION 1: DARK THEMES -->
+          <div class="drawer-section">
+            <div class="drawer-section-title">
+              <span>Dark Themes</span>
+              <span class="drawer-section-count">4 Signature Presets</span>
+            </div>
+            <div class="preset-grid" id="darkThemesGrid">
+              <div class="preset-card active" data-theme="dark" data-preset="midnight">
+                <div class="preset-card-header">
+                  <span class="preset-name">THAAW Midnight</span>
+                  <div class="preset-swatches">
+                    <span class="preset-swatch" style="background: #07111F;"></span>
+                    <span class="preset-swatch" style="background: #38BDF8;"></span>
+                    <span class="preset-swatch" style="background: #FF6FF0;"></span>
+                  </div>
+                </div>
+                <span class="preset-desc">Original signature navy with cyan &amp; pink accents</span>
+              </div>
+              <div class="preset-card" data-theme="dark" data-preset="deep-space">
+                <div class="preset-card-header">
+                  <span class="preset-name">THAAW Deep Space</span>
+                  <div class="preset-swatches">
+                    <span class="preset-swatch" style="background: #030712;"></span>
+                    <span class="preset-swatch" style="background: #818CF8;"></span>
+                    <span class="preset-swatch" style="background: #C084FC;"></span>
+                  </div>
+                </div>
+                <span class="preset-desc">Ultra deep space void with cosmic indigo</span>
+              </div>
+              <div class="preset-card" data-theme="dark" data-preset="obsidian">
+                <div class="preset-card-header">
+                  <span class="preset-name">THAAW Obsidian</span>
+                  <div class="preset-swatches">
+                    <span class="preset-swatch" style="background: #0F1117;"></span>
+                    <span class="preset-swatch" style="background: #34D399;"></span>
+                    <span class="preset-swatch" style="background: #6EE7B7;"></span>
+                  </div>
+                </div>
+                <span class="preset-desc">Volcanic basalt black with emerald highlights</span>
+              </div>
+              <div class="preset-card" data-theme="dark" data-preset="eclipse">
+                <div class="preset-card-header">
+                  <span class="preset-name">THAAW Eclipse</span>
+                  <div class="preset-swatches">
+                    <span class="preset-swatch" style="background: #120E16;"></span>
+                    <span class="preset-swatch" style="background: #FB7185;"></span>
+                    <span class="preset-swatch" style="background: #F43F5E;"></span>
+                  </div>
+                </div>
+                <span class="preset-desc">Solar corona purple and rose gold</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECTION 2: LIGHT THEMES -->
+          <div class="drawer-section">
+            <div class="drawer-section-title">
+              <span>Light Themes</span>
+              <span class="drawer-section-count">4 Pristine Presets</span>
+            </div>
+            <div class="preset-grid" id="lightThemesGrid">
+              <div class="preset-card" data-theme="light" data-preset="white">
+                <div class="preset-card-header">
+                  <span class="preset-name">THAAW White</span>
+                  <div class="preset-swatches">
+                    <span class="preset-swatch" style="background: #F8FAFC;"></span>
+                    <span class="preset-swatch" style="background: #0284C7;"></span>
+                    <span class="preset-swatch" style="background: #D946EF;"></span>
+                  </div>
+                </div>
+                <span class="preset-desc">Crisp, luminous clean slate</span>
+              </div>
+              <div class="preset-card" data-theme="light" data-preset="frost">
+                <div class="preset-card-header">
+                  <span class="preset-name">THAAW Frost</span>
+                  <div class="preset-swatches">
+                    <span class="preset-swatch" style="background: #F1F5F9;"></span>
+                    <span class="preset-swatch" style="background: #0EA5E9;"></span>
+                    <span class="preset-swatch" style="background: #38BDF8;"></span>
+                  </div>
+                </div>
+                <span class="preset-desc">Glacial cool blue atmospheric mist</span>
+              </div>
+              <div class="preset-card" data-theme="light" data-preset="pearl">
+                <div class="preset-card-header">
+                  <span class="preset-name">THAAW Pearl</span>
+                  <div class="preset-swatches">
+                    <span class="preset-swatch" style="background: #FAF9F6;"></span>
+                    <span class="preset-swatch" style="background: #D97706;"></span>
+                    <span class="preset-swatch" style="background: #B45309;"></span>
+                  </div>
+                </div>
+                <span class="preset-desc">Warm mineral ivory with amber notes</span>
+              </div>
+              <div class="preset-card" data-theme="light" data-preset="cloud">
+                <div class="preset-card-header">
+                  <span class="preset-name">THAAW Cloud</span>
+                  <div class="preset-swatches">
+                    <span class="preset-swatch" style="background: #F3F4F6;"></span>
+                    <span class="preset-swatch" style="background: #6366F1;"></span>
+                    <span class="preset-swatch" style="background: #8B5CF6;"></span>
+                  </div>
+                </div>
+                <span class="preset-desc">Soft overcast lavender morning tone</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECTION 3: CUSTOM THEME CREATOR -->
+          <div class="drawer-section">
+            <div class="drawer-section-title">
+              <span>Custom Theme Palette</span>
+              <span class="badge-tag">Studio</span>
+            </div>
+            <div class="custom-theme-palette">
+              <div class="custom-color-item">
+                <span>Primary Accent</span>
+                <input type="color" id="customPrimaryColor" class="custom-color-input" value="#38BDF8" />
+              </div>
+              <div class="custom-color-item">
+                <span>Secondary Accent</span>
+                <input type="color" id="customSecondaryColor" class="custom-color-input" value="#FF6FF0" />
+              </div>
+              <div class="custom-color-item">
+                <span>Background</span>
+                <input type="color" id="customBgColor" class="custom-color-input" value="#07111F" />
+              </div>
+              <div class="custom-color-item">
+                <span>Surface</span>
+                <input type="color" id="customSurfaceColor" class="custom-color-input" value="#0B1626" />
+              </div>
+              <div class="custom-color-item">
+                <span>Text</span>
+                <input type="color" id="customTextColor" class="custom-color-input" value="#F8FAFC" />
+              </div>
+              <div class="custom-color-item">
+                <span>Border</span>
+                <input type="color" id="customBorderColor" class="custom-color-input" value="#1E293B" />
+              </div>
+            </div>
+            <div class="wallpaper-actions-row" style="margin-top: 10px;">
+              <button type="button" id="saveCustomThemeBtn" class="btn btn-primary btn-sm" style="flex: 1.2;">
+                <span data-icon="check" data-icon-size="13"></span>
+                <span>Save Theme</span>
+              </button>
+              <button type="button" id="resetCustomThemeBtn" class="btn btn-secondary btn-sm">Reset</button>
+              <button type="button" id="exportThemeBtn" class="btn btn-secondary btn-sm" title="Copy JSON">
+                <span data-icon="copy" data-icon-size="12"></span>
+                <span>Export</span>
+              </button>
+            </div>
+          </div>
+        </div><!-- /#tabThemesPane -->
+
+        <!-- TAB 4: CANVAS & UI STUDIO -->
+        <div id="tabStudioPane" class="drawer-tab-pane">
+          <!-- ATMOSPHERIC CANVAS LIGHTING -->
+          <div class="drawer-section">
+            <div class="drawer-section-title">
+              <span>Canvas Atmosphere &amp; Optics</span>
+              <span class="badge-tag">Lighting</span>
+            </div>
 
             <!-- Dimmer Slider -->
-            <div class="range-group" style="margin-top: 10px;">
+            <div class="range-group">
               <div class="range-label-row">
-                <span>Wallpaper Dimmer Overlay</span>
-                <span id="overlayOpacityLabel">0%</span>
+                <span style="display:flex; align-items:center; gap:6px;">
+                  <span data-icon="moon" data-icon-size="13" style="color:var(--thaaw-cyan);"></span>
+                  <span>Wallpaper Dimmer Overlay</span>
+                </span>
+                <span id="overlayOpacityLabel" style="font-weight:600; color:var(--thaaw-cyan);">0%</span>
               </div>
               <input type="range" id="overlayOpacityRange" class="range-input" min="0" max="95" value="0" />
             </div>
 
             <!-- Blur Slider -->
-            <div class="range-group" style="margin-top: 8px;">
+            <div class="range-group" style="margin-top: 10px;">
               <div class="range-label-row">
-                <span>Glass Blur Intensity</span>
-                <span id="blurIntensityLabel">16px</span>
+                <span style="display:flex; align-items:center; gap:6px;">
+                  <span data-icon="feather" data-icon-size="13" style="color:var(--thaaw-cyan);"></span>
+                  <span>Glass Blur Intensity</span>
+                </span>
+                <span id="blurIntensityLabel" style="font-weight:600; color:var(--thaaw-cyan);">0px</span>
               </div>
-              <input type="range" id="blurIntensityRange" class="range-input" min="0" max="32" value="16" />
+              <input type="range" id="blurIntensityRange" class="range-input" min="0" max="32" value="0" />
             </div>
-          </div><!-- /.drawer-section -->
-        </div><!-- /#tabWallpapersPane -->
+          </div>
 
-        <!-- TAB 3: STUDIO & EFFECTS -->
-        <div id="tabStudioPane" class="drawer-tab-pane">
-          <!-- SECTION 4: CUSTOMIZATION & CUSTOM THEME CREATOR -->
+          <!-- Component Visibility & Clock Settings -->
           <div class="drawer-section">
-          <div class="drawer-section-title">Custom Theme Creator</div>
-          <div class="custom-theme-palette">
-            <div class="custom-color-item">
-              <span>Primary Accent</span>
-              <input type="color" id="customPrimaryColor" class="custom-color-input" value="#38BDF8" />
+            <div class="drawer-section-title">
+              <span>Component Visibility</span>
+              <span class="badge-tag">Layout</span>
             </div>
-            <div class="custom-color-item">
-              <span>Secondary Accent</span>
-              <input type="color" id="customSecondaryColor" class="custom-color-input" value="#FF6FF0" />
-            </div>
-            <div class="custom-color-item">
-              <span>Background</span>
-              <input type="color" id="customBgColor" class="custom-color-input" value="#07111F" />
-            </div>
-            <div class="custom-color-item">
-              <span>Surface</span>
-              <input type="color" id="customSurfaceColor" class="custom-color-input" value="#0B1626" />
-            </div>
-            <div class="custom-color-item">
-              <span>Text</span>
-              <input type="color" id="customTextColor" class="custom-color-input" value="#F8FAFC" />
-            </div>
-            <div class="custom-color-item">
-              <span>Border</span>
-              <input type="color" id="customBorderColor" class="custom-color-input" value="#1E293B" />
-            </div>
-          </div>
-          <div class="wallpaper-actions-row" style="margin-top: 8px;">
-            <button type="button" id="saveCustomThemeBtn" class="btn btn-primary btn-sm" style="flex: 1;">Save Theme</button>
-            <button type="button" id="resetCustomThemeBtn" class="btn btn-secondary btn-sm">Reset</button>
-            <button type="button" id="exportThemeBtn" class="btn btn-secondary btn-sm">Export</button>
-          </div>
-        </div>
 
-        <!-- Component Visibility & Clock Settings -->
-        <div class="drawer-section">
-          <div class="drawer-section-title">Component Visibility</div>
-          <div class="toggle-row">
-            <label for="toggleZenMode">Zen Minimal Mode</label>
-            <label class="switch">
-              <input type="checkbox" id="toggleZenMode" />
-              <span class="slider"></span>
-            </label>
+            <div class="toggle-cards-list">
+              <!-- Zen Minimal Mode -->
+              <div class="toggle-card zen-card">
+                <div class="toggle-card-info">
+                  <div class="toggle-card-icon zen-icon"><span data-icon="feather" data-icon-size="16"></span></div>
+                  <div>
+                    <label for="toggleZenMode" style="display:block; font-size:12.5px; font-weight:600; color:var(--thaaw-text); cursor:pointer;">Zen Minimal Mode</label>
+                    <span style="font-size:10.5px; color:var(--thaaw-text-muted);">Hide all widgets for pure focus</span>
+                  </div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggleZenMode" />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- Top News Section -->
+              <div class="toggle-card">
+                <div class="toggle-card-info">
+                  <div class="toggle-card-icon"><span data-icon="newspaper" data-icon-size="15"></span></div>
+                  <div>
+                    <label for="toggleNews" style="display:block; font-size:12px; font-weight:500; color:var(--thaaw-text); cursor:pointer;">Top News Section</label>
+                    <span style="font-size:10.5px; color:var(--thaaw-text-muted);">Curated articles and stories feed</span>
+                  </div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggleNews" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- Weather Widget -->
+              <div class="toggle-card">
+                <div class="toggle-card-info">
+                  <div class="toggle-card-icon"><span data-icon="cloud-sun" data-icon-size="15"></span></div>
+                  <div>
+                    <label for="toggleWeather" style="display:block; font-size:12px; font-weight:500; color:var(--thaaw-text); cursor:pointer;">Weather Widget</label>
+                    <span style="font-size:10.5px; color:var(--thaaw-text-muted);">Local forecast &amp; conditions</span>
+                  </div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggleWeather" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- Clock & Date -->
+              <div class="toggle-card">
+                <div class="toggle-card-info">
+                  <div class="toggle-card-icon"><span data-icon="clock" data-icon-size="15"></span></div>
+                  <div>
+                    <label for="toggleClock" style="display:block; font-size:12px; font-weight:500; color:var(--thaaw-text); cursor:pointer;">Clock &amp; Date</label>
+                    <span style="font-size:10.5px; color:var(--thaaw-text-muted);">Live digital time display</span>
+                  </div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggleClock" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- 24-Hour Format -->
+              <div class="toggle-card">
+                <div class="toggle-card-info">
+                  <div class="toggle-card-icon"><span data-icon="calendar" data-icon-size="15"></span></div>
+                  <div>
+                    <label for="toggleClock24h" style="display:block; font-size:12px; font-weight:500; color:var(--thaaw-text); cursor:pointer;">24-Hour Format</label>
+                    <span style="font-size:10.5px; color:var(--thaaw-text-muted);">Switch between 12h and 24h</span>
+                  </div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggleClock24h" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- Privacy Quote -->
+              <div class="toggle-card">
+                <div class="toggle-card-info">
+                  <div class="toggle-card-icon"><span data-icon="quote" data-icon-size="15"></span></div>
+                  <div>
+                    <label for="toggleQuote" style="display:block; font-size:12px; font-weight:500; color:var(--thaaw-text); cursor:pointer;">Privacy Quote</label>
+                    <span style="font-size:10.5px; color:var(--thaaw-text-muted);">Inspirational privacy wisdom</span>
+                  </div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggleQuote" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- Center Logo -->
+              <div class="toggle-card">
+                <div class="toggle-card-info">
+                  <div class="toggle-card-icon"><span data-icon="shield" data-icon-size="15"></span></div>
+                  <div>
+                    <label for="toggleLogo" style="display:block; font-size:12px; font-weight:500; color:var(--thaaw-text); cursor:pointer;">Center THAAW Logo</label>
+                    <span style="font-size:10.5px; color:var(--thaaw-text-muted);">Signature centered brand artwork</span>
+                  </div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggleLogo" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- Shield Status -->
+              <div class="toggle-card">
+                <div class="toggle-card-info">
+                  <div class="toggle-card-icon"><span data-icon="shield-check" data-icon-size="15"></span></div>
+                  <div>
+                    <label for="toggleShield" style="display:block; font-size:12px; font-weight:500; color:var(--thaaw-text); cursor:pointer;">Shield Status</label>
+                    <span style="font-size:10.5px; color:var(--thaaw-text-muted);">Real-time privacy protections badge</span>
+                  </div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggleShield" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- Smooth Animations -->
+              <div class="toggle-card">
+                <div class="toggle-card-info">
+                  <div class="toggle-card-icon"><span data-icon="zap" data-icon-size="15"></span></div>
+                  <div>
+                    <label for="toggleAnimations" style="display:block; font-size:12px; font-weight:500; color:var(--thaaw-text); cursor:pointer;">Smooth Animations</label>
+                    <span style="font-size:10.5px; color:var(--thaaw-text-muted);">Enable 60fps micro-animations</span>
+                  </div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggleAnimations" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
           </div>
-          <div class="toggle-row">
-            <label for="toggleNews">Top News Section</label>
-            <label class="switch">
-              <input type="checkbox" id="toggleNews" checked />
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <label for="toggleWeather">Weather Widget</label>
-            <label class="switch">
-              <input type="checkbox" id="toggleWeather" checked />
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <label for="toggleClock">Clock & Date</label>
-            <label class="switch">
-              <input type="checkbox" id="toggleClock" checked />
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <label for="toggleClock24h">24-Hour Format</label>
-            <label class="switch">
-              <input type="checkbox" id="toggleClock24h" checked />
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <label for="toggleQuote">Privacy Quote</label>
-            <label class="switch">
-              <input type="checkbox" id="toggleQuote" checked />
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <label for="toggleLogo">Center THAAW Logo</label>
-            <label class="switch">
-              <input type="checkbox" id="toggleLogo" checked />
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <label for="toggleShield">Shield Status</label>
-            <label class="switch">
-              <input type="checkbox" id="toggleShield" checked />
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <label for="toggleAnimations">Smooth Animations</label>
-            <label class="switch">
-              <input type="checkbox" id="toggleAnimations" checked />
-              <span class="slider"></span>
-            </label>
-          </div>
-        </div>
-      </div><!-- /#tabStudioPane -->
-    </div><!-- /.drawer-content -->
+        </div><!-- /#tabStudioPane -->
+      </div><!-- /.drawer-content -->
 
       <!-- Drawer Footer Action -->
       <div class="drawer-footer">
-        <button id="resetDefaultsBtn" class="btn btn-secondary" style="flex: 1;">
+        <button id="resetDefaultsBtn" class="btn btn-secondary" style="flex: 1;" title="Reset all preferences">
           <span data-icon="refresh-cw" data-icon-size="14"></span>
           <span>Reset All to Defaults</span>
+        </button>
+        <button type="button" id="drawerDoneBtn" class="btn btn-primary" style="flex: 1;">
+          <span data-icon="check" data-icon-size="14"></span>
+          <span>Done</span>
         </button>
       </div>
     </aside>
@@ -742,10 +1043,15 @@
       preset: 'midnight',
       activeWallpaper: 'default',
       previewWallpaper: null,
+      transitionType: localStorage.getItem('thaaw_wallpaper_transition') || 'crossfade',
+      transitionDuration: parseInt(localStorage.getItem('thaaw_wallpaper_transition_duration') || '700', 10),
+      isInitialLoad: true,
+      currentAnimation: null,
 
       init() {
         // Sync with browser theme
         if (window.thaawAPI) {
+          document.documentElement.classList.add('inside-thaaw-chrome', 'newtab-page');
           document.body.classList.add('inside-thaaw-chrome');
           window.thaawAPI.getTheme().then(res => {
             if (res) {
@@ -753,27 +1059,39 @@
             }
           }).catch(() => {});
           window.thaawAPI.onThemeUpdated((data) => {
-            this.apply(data.theme, data.preset);
+            if (data && (data.theme !== this.theme || data.preset !== this.preset)) {
+              this.apply(data.theme, data.preset);
+            }
           });
           window.thaawAPI.getWallpaper?.().then(wp => {
-            if (wp) {
+            if (wp && wp !== this.activeWallpaper) {
               this.activeWallpaper = wp;
               this.setWallpaper(wp, false);
             }
           }).catch(() => {});
           window.thaawAPI.onWallpaperUpdated?.((wp) => {
-            if (wp) {
+            if (wp && wp !== this.activeWallpaper) {
               this.activeWallpaper = wp;
               this.setWallpaper(wp, false);
+              if (this.renderMyWallpapers) {
+                this.renderMyWallpapers();
+              }
             }
           });
         }
 
+        const savedTrans = localStorage.getItem('thaaw_wallpaper_transition');
+        if (savedTrans) this.transitionType = savedTrans;
+        const savedDur = localStorage.getItem('thaaw_wallpaper_transition_duration');
+        if (savedDur) this.transitionDuration = parseInt(savedDur, 10);
+
         const savedWp = localStorage.getItem('thaaw_active_wallpaper') || 'default';
         this.setWallpaper(savedWp, false);
+        setTimeout(() => { this.isInitialLoad = false; }, 250);
 
         this.setupPresetCards();
         this.setupWallpaperGrid();
+        this.setupTransitionControls();
         this.setupSlideshowControls();
         this.setupCustomThemeControls();
       },
@@ -791,6 +1109,13 @@
           card.classList.toggle('active', isMatch);
         });
 
+        // Update active preset label in drawer header
+        const activePresetLabel = document.getElementById('activePresetLabel');
+        if (activePresetLabel) {
+          const formatted = (this.preset || 'midnight').replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+          activePresetLabel.textContent = formatted;
+        }
+
         // Update top-right quick theme button icon
         const themeBtn = document.getElementById('themeToggleBtn');
         if (themeBtn && window.getSvgIcon) {
@@ -801,7 +1126,10 @@
         // Automatically switch wallpaper to theme-appropriate wallpaper when theme is switched
         const isCurrentLight = Boolean(this.activeWallpaper && (this.activeWallpaper.startsWith('light') || this.activeWallpaper.includes('light/')));
         if (!this.activeWallpaper || this.activeWallpaper === 'default' || (this.theme === 'light' && !isCurrentLight) || (this.theme === 'dark' && isCurrentLight)) {
-          this.setWallpaper(this.theme === 'light' ? 'light-13' : 'thaaw-midnight-mountains');
+          const nextWp = this.theme === 'light' ? 'light-13' : 'midnight-mountains';
+          this.setWallpaper(nextWp, true);
+        } else {
+          this.applyWallpaperToDOM(this.activeWallpaper);
         }
 
         // Dynamically update weather icon based on theme mode
@@ -917,46 +1245,404 @@
         });
       },
 
-      async setWallpaper(wpId, notify = true) {
-        this.activeWallpaper = wpId;
-        try { localStorage.setItem('thaaw_active_wallpaper', wpId); } catch (_) {}
-        if (notify && window.thaawAPI && window.thaawAPI.setWallpaper) {
-          await window.thaawAPI.setWallpaper(wpId);
+      setupTransitionControls() {
+        const transCards = document.querySelectorAll('.transition-card');
+        const durationPills = document.querySelectorAll('.duration-pill');
+        const speedLabel = document.getElementById('transitionSpeedLabel');
+        const bannerName = document.getElementById('activeTransitionName');
+        const previewBtn = document.getElementById('previewTransitionBtn');
+        const openTransBtn = document.getElementById('openTransitionsTabBtn');
+
+        const effectNames = {
+          crossfade: 'Smooth Crossfade',
+          zoom: 'Ken Burns Zoom',
+          'slide-left': 'Slide Horizontal',
+          'slide-right': 'Slide Reverse',
+          'slide-up': 'Slide Upward',
+          blur: 'Blur Dissolve',
+          flash: 'Flash Bloom',
+          none: 'Instant Cut'
+        };
+
+        const updateUI = () => {
+          transCards.forEach(c => {
+            c.classList.toggle('active', c.dataset.transition === this.transitionType);
+          });
+          durationPills.forEach(p => {
+            p.classList.toggle('active', parseInt(p.dataset.duration, 10) === this.transitionDuration);
+          });
+          if (bannerName) bannerName.textContent = effectNames[this.transitionType] || 'Smooth Crossfade';
+          if (speedLabel) {
+            const speedText = this.transitionDuration <= 400 ? 'Fast' : (this.transitionDuration >= 1000 ? 'Cinematic' : 'Natural');
+            speedLabel.textContent = `${this.transitionDuration}ms (${speedText})`;
+          }
+        };
+
+        updateUI();
+
+        transCards.forEach(card => {
+          card.addEventListener('click', () => {
+            const chosen = card.dataset.transition;
+            this.transitionType = chosen;
+            try { localStorage.setItem('thaaw_wallpaper_transition', chosen); } catch (_) {}
+            updateUI();
+            showToast(`Transition set to ${effectNames[chosen] || chosen}`);
+            // Trigger an interactive live preview of the transition
+            this.previewCurrentTransition();
+          });
+        });
+
+        durationPills.forEach(pill => {
+          pill.addEventListener('click', () => {
+            const dur = parseInt(pill.dataset.duration, 10);
+            this.transitionDuration = dur;
+            try { localStorage.setItem('thaaw_wallpaper_transition_duration', String(dur)); } catch (_) {}
+            updateUI();
+            showToast(`Transition speed: ${dur}ms`);
+          });
+        });
+
+        previewBtn?.addEventListener('click', () => {
+          this.previewCurrentTransition();
+          showToast(`Testing ${effectNames[this.transitionType] || this.transitionType} transition`);
+        });
+
+        openTransBtn?.addEventListener('click', () => {
+          document.getElementById('tabNavTransitions')?.click();
+        });
+      },
+
+      previewCurrentTransition() {
+        const currentWp = this.activeWallpaper || 'default';
+        const options = {
+          transition: this.transitionType || 'crossfade',
+          duration: this.transitionDuration || 700,
+          force: true
+        };
+        if (window.thaawAPI?.setWallpaper) {
+          window.thaawAPI.setWallpaper(currentWp, options).catch(() => {});
+        } else {
+          this.runWallpaperTransition(currentWp, currentWp, false);
+        }
+      },
+
+      resolveWallpaperUrl(wpId) {
+        if (!wpId || wpId === 'none') return '';
+        if (wpId.startsWith('http://') || wpId.startsWith('https://') || wpId.startsWith('data:') || wpId.startsWith('file://')) {
+          return wpId;
+        }
+        let file = '';
+        if (!wpId || wpId === 'default') {
+          file = this.theme === 'light' ? 'light/light-13.webp' : 'thaaw-midnight-mountains.webp';
+        } else {
+          const cleanId = String(wpId).trim();
+          const normalized = cleanId.replace(/^thaaw-/, '').replace(/\.webp$/, '');
+          const found = WALLPAPERS_30.find(w => 
+            w.id === cleanId || 
+            w.id === normalized ||
+            ('thaaw-' + w.id) === cleanId ||
+            w.file === cleanId || 
+            w.file === `${cleanId}.webp` ||
+            w.file === `thaaw-${cleanId}.webp` ||
+            w.file.replace(/\.webp$/, '') === normalized ||
+            (w.filename && (w.filename === cleanId || w.filename === `${cleanId}.webp`))
+          );
+          if (found) {
+            file = found.file || found.filename;
+          } else {
+            file = cleanId.startsWith('light-') ? `light/${cleanId}.webp` : (cleanId.startsWith('thaaw-') ? `${cleanId}.webp` : `thaaw-${cleanId}.webp`);
+          }
+        }
+        return (window.location.protocol === 'thaaw:') ? `thaaw://wallpapers/${file}` : `../../assets/wallpapers/${file}`;
+      },
+
+      runWallpaperTransition(prevWp, nextWp, isVideo = false) {
+        if (window.thaawAPI) {
+          // Inside Thaaw, wallpaper transitions are handled at the chrome background level
+          return;
         }
         const wpLayer = document.getElementById('wallpaperLayer');
-        if (!wpLayer) return;
-        
-        if (!wpId || wpId === 'default') {
-          if (this.theme === 'light') {
-            wpLayer.className = 'newtab-wallpaper-layer';
-            wpLayer.style.backgroundImage = 'url("../assets/wallpapers/light/light-13.webp")';
-            wpLayer.style.backgroundColor = '#FAF9F6';
-          } else {
-            wpLayer.className = 'newtab-wallpaper-layer default-bg';
-            wpLayer.style.backgroundImage = 'url("../assets/wallpapers/thaaw-midnight-mountains.webp")';
-            wpLayer.style.backgroundColor = '#050812';
-          }
-        } else if (wpId === 'none') {
-          wpLayer.className = 'newtab-wallpaper-layer';
-          wpLayer.style.backgroundImage = 'none';
-          wpLayer.style.backgroundColor = 'var(--thaaw-bg, #07111F)';
-        } else if (wpId.startsWith('http://') || wpId.startsWith('https://') || wpId.startsWith('data:') || wpId.startsWith('file://')) {
-          wpLayer.className = 'newtab-wallpaper-layer';
-          wpLayer.style.backgroundImage = `url("${wpId}")`;
-          wpLayer.style.backgroundColor = this.theme === 'light' ? '#F8FAFC' : '#07111F';
-        } else {
-          const found = WALLPAPERS_30.find(w => w.id === wpId || w.file === wpId || w.filename === wpId);
-          if (found) {
-            wpLayer.className = 'newtab-wallpaper-layer';
-            wpLayer.style.backgroundImage = `url("../assets/wallpapers/${found.file || found.filename}")`;
-            wpLayer.style.backgroundColor = found.mode === 'light' ? '#F8FAFC' : '#07111F';
+        const incomingLayer = document.getElementById('wallpaperLayerIncoming');
+        const wpVideo = document.getElementById('wallpaperVideo');
+        const incomingVideo = document.getElementById('wallpaperVideoIncoming');
+        if (!wpLayer || !incomingLayer) {
+          this.applyWallpaperToDOM(nextWp, isVideo);
+          return;
+        }
+
+        if (this.currentAnimation) {
+          try { this.currentAnimation.cancel(); } catch (_) {}
+          this.currentAnimation = null;
+        }
+
+        let isVid = !!isVideo;
+        if (!isVid && typeof nextWp === 'string') {
+          if (nextWp.startsWith('data:video/') || nextWp.endsWith('.mp4') || nextWp.endsWith('.webm') || nextWp.endsWith('.mov')) {
+            isVid = true;
           }
         }
 
-        // Update active state in grid
+        const duration = this.transitionDuration || 700;
+        const effect = this.transitionType || 'crossfade';
+
+        if (isVid) {
+          if (incomingVideo) {
+            incomingVideo.src = nextWp;
+            incomingVideo.style.display = 'block';
+            incomingVideo.style.opacity = '0';
+            incomingVideo.play().catch(() => {});
+            const anim = incomingVideo.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing: 'ease', fill: 'forwards' });
+            anim.onfinish = () => {
+              if (wpVideo) {
+                wpVideo.src = nextWp;
+                wpVideo.style.display = 'block';
+                wpVideo.play().catch(() => {});
+              }
+              incomingVideo.style.display = 'none';
+              try { anim.cancel(); } catch (_) {}
+              this.applyWallpaperToDOM(nextWp, true);
+            };
+            this.currentAnimation = anim;
+            return;
+          }
+        }
+
+        if (wpVideo && wpVideo.style.display !== 'none') {
+          wpVideo.pause();
+          wpVideo.style.display = 'none';
+        }
+
+        const nextUrl = this.resolveWallpaperUrl(nextWp);
+        incomingLayer.style.display = 'block';
+        incomingLayer.style.backgroundColor = nextWp === 'none' ? (this.theme === 'light' ? '#F8FAFC' : '#050812') : 'transparent';
+        incomingLayer.style.backgroundImage = nextWp === 'none' ? 'none' : `url("${nextUrl}")`;
+        incomingLayer.style.backgroundSize = 'cover';
+        incomingLayer.style.backgroundPosition = 'center';
+        incomingLayer.style.backgroundRepeat = 'no-repeat';
+
+        const blurVal = parseInt(UserPreferences.data?.blurIntensity, 10) || 0;
+        const baseBlur = blurVal > 0 ? `blur(${blurVal}px)` : 'none';
+        incomingLayer.style.filter = baseBlur;
+
+        let inKeyframes = [];
+        let outKeyframes = [];
+        let inOptions = { duration, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'forwards' };
+        let outOptions = { duration, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'forwards' };
+
+        switch (effect) {
+          case 'zoom':
+            inKeyframes = [
+              { opacity: 0, transform: 'scale(1.15)' },
+              { opacity: 1, transform: 'scale(1)' }
+            ];
+            outKeyframes = [
+              { opacity: 1, transform: 'scale(1)' },
+              { opacity: 0, transform: 'scale(0.95)' }
+            ];
+            break;
+          case 'slide-left':
+            inKeyframes = [
+              { transform: 'translateX(100%)', opacity: 1 },
+              { transform: 'translateX(0%)', opacity: 1 }
+            ];
+            outKeyframes = [
+              { transform: 'translateX(0%)', opacity: 1 },
+              { transform: 'translateX(-30%)', opacity: 0.3 }
+            ];
+            break;
+          case 'slide-right':
+            inKeyframes = [
+              { transform: 'translateX(-100%)', opacity: 1 },
+              { transform: 'translateX(0%)', opacity: 1 }
+            ];
+            outKeyframes = [
+              { transform: 'translateX(0%)', opacity: 1 },
+              { transform: 'translateX(30%)', opacity: 0.3 }
+            ];
+            break;
+          case 'slide-up':
+            inKeyframes = [
+              { transform: 'translateY(100%)', opacity: 1 },
+              { transform: 'translateY(0%)', opacity: 1 }
+            ];
+            outKeyframes = [
+              { transform: 'translateY(0%)', opacity: 1 },
+              { transform: 'translateY(-25%)', opacity: 0.3 }
+            ];
+            break;
+          case 'blur':
+            inKeyframes = [
+              { opacity: 0, filter: 'blur(32px) scale(1.05)' },
+              { opacity: 1, filter: baseBlur + ' scale(1)' }
+            ];
+            outKeyframes = [
+              { opacity: 1, filter: baseBlur + ' scale(1)' },
+              { opacity: 0, filter: 'blur(32px) scale(0.96)' }
+            ];
+            break;
+          case 'flash':
+            inKeyframes = [
+              { opacity: 0, filter: 'brightness(2.2) contrast(1.1)' },
+              { opacity: 1, filter: baseBlur + ' brightness(1) contrast(1)' }
+            ];
+            outKeyframes = [
+              { opacity: 1 },
+              { opacity: 0 }
+            ];
+            outOptions.duration = duration * 0.7;
+            break;
+          case 'crossfade':
+          default:
+            inKeyframes = [
+              { opacity: 0 },
+              { opacity: 1 }
+            ];
+            outKeyframes = [
+              { opacity: 1 },
+              { opacity: 0 }
+            ];
+            break;
+        }
+
+        try {
+          const animIn = incomingLayer.animate(inKeyframes, inOptions);
+          const animOut = wpLayer.animate(outKeyframes, outOptions);
+
+          const cleanup = () => {
+            this.applyWallpaperToDOM(nextWp, isVideo);
+            incomingLayer.style.display = 'none';
+            incomingLayer.style.opacity = '0';
+            incomingLayer.style.transform = 'none';
+            incomingLayer.style.filter = 'none';
+            try { animIn.cancel(); animOut.cancel(); } catch (_) {}
+            this.currentAnimation = null;
+          };
+
+          animIn.onfinish = cleanup;
+          this.currentAnimation = animIn;
+        } catch (_err) {
+          this.applyWallpaperToDOM(nextWp, isVideo);
+        }
+      },
+
+      updateActiveWallpaperUI(wpId) {
+        const cleanWp = String(wpId || '').replace(/^thaaw-/, '').replace(/\.webp$/, '');
         document.querySelectorAll('.wallpaper-card-15').forEach(card => {
-          card.classList.toggle('active', card.dataset.wallpaperId === wpId);
+          const cId = (card.dataset.wallpaperId || '').replace(/^thaaw-/, '').replace(/\.webp$/, '');
+          const cUrl = card.dataset.wallpaperUrl || '';
+          const isMatch = (
+            cId === cleanWp ||
+            (cUrl && (cUrl === wpId || cUrl === cleanWp)) ||
+            ((!wpId || wpId === 'default') && (this.theme === 'light' ? cId === 'light-13' : cId === 'midnight-mountains'))
+          );
+          card.classList.toggle('active', !!isMatch);
         });
+
+        document.querySelectorAll('#myWallpapersGrid .wallpaper-card-15').forEach(card => {
+          const isMatch = card.dataset.wallpaperUrl === wpId || card.dataset.wallpaperId === wpId;
+          card.classList.toggle('active', !!isMatch);
+        });
+      },
+
+      applyWallpaperToDOM(wpId, isVideo = false) {
+        this.updateActiveWallpaperUI(wpId);
+        if (window.thaawAPI) {
+          // Inside Thaaw, browser window background renders all wallpapers (images & videos)
+          return;
+        }
+        const wpLayer = document.getElementById('wallpaperLayer');
+        const wpVideo = document.getElementById('wallpaperVideo');
+        if (!wpLayer) return;
+
+        // Determine if target wallpaper is a live video
+        let isVid = !!isVideo;
+        if (!isVid && typeof wpId === 'string') {
+          if (wpId.startsWith('data:video/') || /\.(mp4|webm|mov|m4v|ogg)$/i.test(wpId)) {
+            isVid = true;
+          } else {
+            try {
+              const customList = JSON.parse(localStorage.getItem('thaaw_custom_wallpapers') || '[]');
+              const match = customList.find(c => c.dataUrl === wpId || c.id === wpId || c.url === wpId);
+              if (match && match.isVideo) isVid = true;
+            } catch (_) {}
+          }
+        }
+
+        if (isVid && wpVideo) {
+          wpLayer.className = 'newtab-wallpaper-layer';
+          wpLayer.style.backgroundImage = 'none';
+          wpLayer.style.backgroundColor = 'transparent';
+          wpVideo.style.display = 'block';
+          if (wpVideo.getAttribute('src') !== wpId) {
+            wpVideo.src = wpId;
+          }
+          wpVideo.play().catch(() => {});
+        } else {
+          if (wpVideo) {
+            wpVideo.pause();
+            wpVideo.removeAttribute('src');
+            wpVideo.load();
+            wpVideo.style.display = 'none';
+          }
+
+          wpLayer.className = 'newtab-wallpaper-layer';
+          wpLayer.style.backgroundColor = 'transparent';
+          wpLayer.style.backgroundSize = 'cover';
+          wpLayer.style.backgroundPosition = 'center';
+          wpLayer.style.backgroundRepeat = 'no-repeat';
+
+          if (wpId === 'none') {
+            wpLayer.style.backgroundImage = 'none';
+            wpLayer.style.backgroundColor = this.theme === 'light' ? '#F8FAFC' : '#050812';
+          } else if (wpId && (wpId.startsWith('http://') || wpId.startsWith('https://') || wpId.startsWith('data:') || wpId.startsWith('file://') || wpId.startsWith('thaaw://'))) {
+            wpLayer.style.backgroundImage = `url("${wpId}")`;
+          } else {
+            const wpUrl = this.resolveWallpaperUrl(wpId);
+            wpLayer.style.backgroundImage = `url("${wpUrl}")`;
+          }
+        }
+      },
+
+      async setWallpaper(wpId, notify = true, isVideo = false) {
+        const prevWp = this.activeWallpaper;
+        this.activeWallpaper = wpId;
+        try { localStorage.setItem('thaaw_active_wallpaper', wpId); } catch (_) {}
+        this.updateActiveWallpaperUI(wpId);
+
+        let isVid = !!isVideo;
+        if (!isVid && typeof wpId === 'string') {
+          if (wpId.startsWith('data:video/') || /\.(mp4|webm|mov|m4v|ogg)$/i.test(wpId)) {
+            isVid = true;
+          } else {
+            try {
+              const customList = JSON.parse(localStorage.getItem('thaaw_custom_wallpapers') || '[]');
+              const match = customList.find(c => c.dataUrl === wpId || c.id === wpId || c.url === wpId);
+              if (match && match.isVideo) isVid = true;
+            } catch (_) {}
+          }
+        }
+
+        const options = {
+          transition: this.transitionType || 'crossfade',
+          duration: this.transitionDuration || 700,
+          isVideo: isVid
+        };
+
+        if (window.thaawAPI) {
+          if (notify && window.thaawAPI.setWallpaper) {
+            try {
+              await window.thaawAPI.setWallpaper(wpId, options);
+            } catch (_) {}
+          }
+        } else {
+          const container = document.getElementById('wallpaperContainer');
+          if (container) container.style.display = 'block';
+          if (this.isInitialLoad || prevWp === wpId || this.transitionType === 'none') {
+            this.applyWallpaperToDOM(wpId, isVid);
+          } else {
+            this.runWallpaperTransition(prevWp, wpId, isVid);
+          }
+        }
       },
 
       setupPresetCards() {
@@ -974,14 +1660,220 @@
         if (!grid) return;
         
         let currentFilter = 'all';
+        const myContainer = document.getElementById('myWallpapersContainer');
+        const myGrid = document.getElementById('myWallpapersGrid');
+        const fileInput = document.getElementById('customWallpaperFileInput');
+        const browseBtn = document.getElementById('browseWallpaperBtn');
+        const dropzone = document.getElementById('wallpaperDropzone');
+
+        const loadCustomWallpapers = async () => {
+          if (window.thaawAPI?.getCustomWallpapers) {
+            try {
+              const list = await window.thaawAPI.getCustomWallpapers();
+              if (Array.isArray(list)) return list;
+            } catch (e) {
+              console.warn('[ThemeEngine] Could not load custom wallpapers via thaawAPI:', e);
+            }
+          }
+          try {
+            return JSON.parse(localStorage.getItem('thaaw_custom_wallpapers') || '[]');
+          } catch {
+            return [];
+          }
+        };
+
+        const renderMyWallpapers = async () => {
+          if (!myGrid) return;
+          myGrid.innerHTML = '';
+          const customList = await loadCustomWallpapers();
+          if (customList.length === 0) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'grid-column: 1 / -1; padding: 24px 16px; text-align: center; color: var(--thaaw-text-muted); font-size: 11px;';
+            empty.textContent = 'No custom wallpapers yet. Drop an image or video above!';
+            myGrid.appendChild(empty);
+            return;
+          }
+
+          customList.forEach((item, idx) => {
+            const wpUrl = item.url || item.dataUrl;
+            const card = document.createElement('div');
+            const isActive = this.activeWallpaper === wpUrl || this.activeWallpaper === item.id;
+            card.className = `wallpaper-card-15 ${isActive ? 'active' : ''}`;
+            card.dataset.wallpaperUrl = wpUrl;
+            card.dataset.wallpaperId = item.id;
+            card.title = item.name;
+            card.innerHTML = `
+              <div class="wallpaper-mini-browser">
+                <div class="mini-browser-chrome">
+                  <span class="mini-dot red"></span>
+                  <span class="mini-dot yellow"></span>
+                  <span class="mini-dot green"></span>
+                  <span class="mini-address-pill"></span>
+                </div>
+                ${item.isVideo 
+                  ? `<video src="${item.fileUrl || wpUrl}" style="width:100%;height:calc(100% - 14px);object-fit:cover;" muted loop playsinline></video>`
+                  : `<img class="wallpaper-thumb-img" src="${item.fileUrl || wpUrl}" alt="${item.name}" />`
+                }
+              </div>
+              <div class="wallpaper-title-overlay" style="display:flex;align-items:center;justify-content:space-between;">
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;">${item.name}</span>
+                <button type="button" class="del-custom-wp-btn" style="background:none;border:none;color:#ef4444;font-size:13px;cursor:pointer;padding:0 4px;line-height:1;" title="Delete wallpaper">&times;</button>
+              </div>
+            `;
+            card.addEventListener('click', async (e) => {
+              if (e.target.closest('.del-custom-wp-btn')) {
+                e.stopPropagation();
+                if (window.thaawAPI?.deleteCustomWallpaper) {
+                  try {
+                    await window.thaawAPI.deleteCustomWallpaper(item.id);
+                  } catch (_) {}
+                }
+                try {
+                  const list = JSON.parse(localStorage.getItem('thaaw_custom_wallpapers') || '[]');
+                  const filtered = list.filter(c => c.id !== item.id && c.dataUrl !== wpUrl && c.url !== wpUrl);
+                  localStorage.setItem('thaaw_custom_wallpapers', JSON.stringify(filtered));
+                } catch (_) {}
+
+                if (this.activeWallpaper === wpUrl || this.activeWallpaper === item.id) {
+                  this.setWallpaper('default');
+                }
+                await renderMyWallpapers();
+                showToast('Custom wallpaper removed.');
+                return;
+              }
+              this.previewWallpaper = wpUrl;
+              this.setWallpaper(wpUrl, true, item.isVideo);
+            });
+            myGrid.appendChild(card);
+          });
+        };
+        this.renderMyWallpapers = renderMyWallpapers;
+
+        const handleUpload = async (file) => {
+          if (!file) return;
+          const isVideo = file.type.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogg)$/i.test(file.name);
+          const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|svg)$/i.test(file.name);
+          if (!isImage && !isVideo) {
+            showToast('Unsupported format. Please select an image or video.');
+            return;
+          }
+
+          showToast('Processing custom wallpaper...');
+
+          if (window.thaawAPI?.uploadCustomWallpaper) {
+            try {
+              let filePath = '';
+              if (window.thaawAPI.getPathForFile) {
+                try { filePath = window.thaawAPI.getPathForFile(file) || ''; } catch (_) {}
+              }
+              if (!filePath && file.path) {
+                filePath = file.path;
+              }
+
+              let buffer = null;
+              if (!filePath) {
+                buffer = await file.arrayBuffer();
+              }
+
+              const res = await window.thaawAPI.uploadCustomWallpaper({
+                name: file.name.replace(/\.[^/.]+$/, '').slice(0, 32),
+                originalName: file.name,
+                isVideo,
+                filePath: filePath || undefined,
+                buffer: buffer || undefined
+              });
+
+              if (res && res.success && res.item) {
+                const targetUrl = res.item.url;
+                this.previewWallpaper = targetUrl;
+                await this.setWallpaper(targetUrl, true, isVideo);
+                await renderMyWallpapers();
+                showToast('Wallpaper uploaded & applied!');
+                return;
+              } else {
+                console.error('[ThemeEngine] Upload failed:', res?.error);
+                showToast('Upload failed: ' + (res?.error || 'Unknown error'));
+              }
+            } catch (err) {
+              console.error('[ThemeEngine] Error during wallpaper upload:', err);
+              showToast('Upload error: ' + (err?.message || 'Upload failed'));
+            }
+          }
+
+          // Fallback if running without thaawAPI (e.g. tests or standalone)
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const dataUrl = e.target.result;
+            let customList = [];
+            try {
+              customList = JSON.parse(localStorage.getItem('thaaw_custom_wallpapers') || '[]');
+            } catch (_) {}
+            const newWp = {
+              id: 'custom-' + Date.now(),
+              name: file.name.replace(/\.[^/.]+$/, '').slice(0, 24),
+              dataUrl,
+              url: dataUrl,
+              isVideo
+            };
+            customList.unshift(newWp);
+            try {
+              localStorage.setItem('thaaw_custom_wallpapers', JSON.stringify(customList.slice(0, 5)));
+            } catch (_) {}
+            this.previewWallpaper = dataUrl;
+            this.setWallpaper(dataUrl, true, isVideo);
+            renderMyWallpapers();
+            showToast('Wallpaper uploaded & applied!');
+          };
+          reader.readAsDataURL(file);
+        };
+
+        browseBtn?.addEventListener('click', () => fileInput?.click());
+        fileInput?.addEventListener('change', (e) => {
+          if (e.target.files && e.target.files[0]) {
+            handleUpload(e.target.files[0]);
+            e.target.value = '';
+          }
+        });
+
+        if (dropzone) {
+          dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.style.borderColor = 'var(--thaaw-cyan)';
+          });
+          dropzone.addEventListener('dragleave', () => {
+            dropzone.style.borderColor = '';
+          });
+          dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.style.borderColor = '';
+            if (e.dataTransfer?.files?.[0]) {
+              handleUpload(e.dataTransfer.files[0]);
+            }
+          });
+        }
 
         const renderGrid = () => {
+          if (currentFilter === 'my') {
+            grid.style.display = 'none';
+            if (myContainer) myContainer.classList.remove('hidden');
+            renderMyWallpapers();
+            return;
+          }
+
+          grid.style.display = 'grid';
+          if (myContainer) myContainer.classList.add('hidden');
           grid.innerHTML = '';
           const filtered = WALLPAPERS_30.filter(wp => currentFilter === 'all' || wp.mode === currentFilter);
 
+          const cleanActive = String(this.activeWallpaper || '').replace(/^thaaw-/, '').replace(/\.webp$/, '');
           filtered.forEach((wp) => {
+            const cleanWp = wp.id.replace(/^thaaw-/, '').replace(/\.webp$/, '');
+            const isMatch = (
+              cleanWp === cleanActive ||
+              ((!this.activeWallpaper || this.activeWallpaper === 'default') && (this.theme === 'light' ? wp.id === 'light-13' : wp.id === 'midnight-mountains'))
+            );
             const card = document.createElement('div');
-            card.className = `wallpaper-card-15 ${this.activeWallpaper === wp.id ? 'active' : ''}`;
+            card.className = `wallpaper-card-15 ${isMatch ? 'active' : ''}`;
             card.dataset.wallpaperId = wp.id;
             card.dataset.mode = wp.mode;
             card.title = `${wp.name} (${wp.mode})`;
@@ -993,7 +1885,7 @@
                   <span class="mini-dot green"></span>
                   <span class="mini-address-pill"></span>
                 </div>
-                <img class="wallpaper-thumb-img" src="../assets/wallpapers/${wp.thumb}" alt="${wp.name}" loading="lazy" />
+                <img class="wallpaper-thumb-img" src="${window.location.protocol === 'thaaw:' ? 'thaaw://wallpapers/' + wp.thumb : '../../assets/wallpapers/' + wp.thumb}" alt="${wp.name}" loading="lazy" />
               </div>
               <div class="wallpaper-title-overlay">${wp.name}</div>
             `;
@@ -1018,19 +1910,23 @@
         renderGrid();
 
         document.getElementById('applyWallpaperBtn')?.addEventListener('click', () => {
-          if (this.previewWallpaper) {
-            this.setWallpaper(this.previewWallpaper);
+          const wpToApply = this.previewWallpaper || this.activeWallpaper;
+          if (wpToApply) {
+            const isVid = /\.(mp4|webm|mov|m4v|ogg)$/i.test(wpToApply);
+            this.setWallpaper(wpToApply, true, isVid);
             showToast('Wallpaper applied.');
           }
         });
 
         document.getElementById('removeWallpaperBtn')?.addEventListener('click', () => {
-          this.setWallpaper('none');
+          this.previewWallpaper = 'none';
+          this.setWallpaper('none', true);
           showToast('Wallpaper set to solid background.');
         });
 
         document.getElementById('resetWallpaperBtn')?.addEventListener('click', () => {
-          this.setWallpaper('default');
+          this.previewWallpaper = 'default';
+          this.setWallpaper('default', true);
           showToast('Wallpaper reset to default.');
         });
       },
@@ -1088,7 +1984,7 @@
       data: {
         zenMode: false,
         overlayOpacity: 0,
-        blurIntensity: 16,
+        blurIntensity: 0,
         showNews: true,
         showWeather: true,
         showClock: true,
@@ -1104,13 +2000,18 @@
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
-            // If user had default 55% saved previously, normalize to 0% for pure glass wallpaper visibility
-            if (parsed && parsed.overlayOpacity === 55) {
+            // If user had previous default 55% or 16px blur, normalize to 0 for pure crisp wallpaper visibility
+            if (parsed && (parsed.overlayOpacity === 55 || parsed.overlayOpacity === undefined)) {
               parsed.overlayOpacity = 0;
+            }
+            if (parsed && (parsed.blurIntensity === 16 || parsed.blurIntensity === undefined)) {
+              parsed.blurIntensity = 0;
             }
             this.data = { ...this.data, ...parsed };
           } catch (_e) {}
         }
+        if (this.data.overlayOpacity === 55) this.data.overlayOpacity = 0;
+        if (this.data.blurIntensity === 16) this.data.blurIntensity = 0;
         this.apply();
         this.bindEvents();
       },
@@ -1129,11 +2030,31 @@
         const overlay = document.getElementById('wallpaperOverlay');
         if (overlay) {
           const opacity = (this.data.overlayOpacity !== undefined ? this.data.overlayOpacity : 0);
-          overlay.style.background = opacity > 0 ? `rgba(3, 7, 18, ${opacity / 100})` : 'transparent';
-          overlay.style.opacity = opacity > 0 ? '1' : '0';
+          const blur = parseInt(this.data.blurIntensity, 10) || 0;
+          if (opacity > 0) {
+            const isLight = (ThemeEngine && ThemeEngine.theme === 'light');
+            const overlayColor = isLight ? '248, 250, 252' : '225, 225, 225, /0%';
+            overlay.style.background = `rgba(${overlayColor}, ${opacity / 100})`;
+            overlay.style.opacity = '1';
+          } else {
+            overlay.style.background = 'transparent';
+            overlay.style.opacity = '0';
+          }
+          if (blur > 0) {
+            overlay.style.backdropFilter = `blur(${blur}px)`;
+            overlay.style.webkitBackdropFilter = `blur(${blur}px)`;
+          } else {
+            overlay.style.backdropFilter = 'none';
+            overlay.style.webkitBackdropFilter = 'none';
+          }
           overlay.style.pointerEvents = 'none';
         }
-        document.documentElement.style.setProperty('--thaaw-glass-blur', `${this.data.blurIntensity}px`);
+        const wpLayer = document.getElementById('wallpaperLayer');
+        if (wpLayer) {
+          const blur = parseInt(this.data.blurIntensity, 10) || 0;
+          wpLayer.style.filter = blur > 0 ? `blur(${blur}px)` : 'none';
+        }
+        document.documentElement.style.setProperty('--thaaw-glass-blur', `${this.data.blurIntensity || 0}px`);
 
         const zenActive = !!this.data.zenMode;
         const zenBtn = document.getElementById('zenModeToggleBtn');
@@ -1150,6 +2071,7 @@
         if (zenActive) {
           setDisplay('lowerPanel', false);
           setDisplay('centerBrandSection', false);
+          setDisplay('floatingCloudWidget', false);
           if (window.NewsState && NewsState.carouselTimer) {
             clearInterval(NewsState.carouselTimer);
             NewsState.carouselTimer = null;
@@ -1162,6 +2084,19 @@
           setDisplay('quoteWidgetCard', this.data.showQuote);
           setDisplay('centerBrandSection', this.data.showLogo);
           setDisplay('shieldWidgetCard', this.data.showShield);
+
+          const weatherDivider = document.getElementById('weatherClockDivider');
+          if (weatherDivider) {
+            weatherDivider.style.display = (this.data.showWeather && (this.data.showClock || this.data.showShield)) ? '' : 'none';
+          }
+          const shieldDivider = document.getElementById('clockShieldDivider');
+          if (shieldDivider) {
+            shieldDivider.style.display = (this.data.showClock && this.data.showShield) ? '' : 'none';
+          }
+          const cloudWidget = document.getElementById('floatingCloudWidget');
+          if (cloudWidget) {
+            cloudWidget.style.display = (!this.data.showWeather && !this.data.showClock && !this.data.showShield) ? 'none' : '';
+          }
 
           const lowerPanel = document.getElementById('lowerPanel');
           if (lowerPanel) {
@@ -1724,14 +2659,15 @@
         const grid = document.getElementById('newsCardsGrid');
         if (!grid) return;
         grid.innerHTML = '';
-        const secondary = this.articles.slice(1);
-        if (secondary.length === 0) return;
-        this.appendCards(secondary);
+        if (!this.articles || this.articles.length === 0) return;
+        this.appendCards(this.articles);
       },
 
       appendCards(newBatch) {
         const grid = document.getElementById('newsCardsGrid');
         if (!grid) return;
+
+        const defaultFallbackImage = 'https://images.unsplash.com/photo-1488590528505-98d2b5aba04b?w=600&auto=format&fit=crop&q=80';
 
         newBatch.forEach((art) => {
           const card = document.createElement('a');
@@ -1740,34 +2676,27 @@
           card.target = '_blank';
           card.rel = 'noreferrer';
 
-          const platformTag = (art.platform || 'web').toUpperCase();
-          const imgSnippet = art.imageUrl 
-            ? `<div class="news-card-img-wrap"><img class="news-card-img" src="${art.imageUrl}" alt="" loading="lazy" /><span class="news-platform-pill ${art.platform || 'web'}">${platformTag}</span></div>`
-            : '';
+          const imgSrc = art.imageUrl || defaultFallbackImage;
+          const imgSnippet = `
+            <div class="news-card-img-wrap">
+              <img class="news-card-img" src="${imgSrc}" alt="" loading="lazy" onerror="this.src='${defaultFallbackImage}'" />
+            </div>
+          `;
 
-          // Story cluster rendering (Req 55-56)
-          let clusterHtml = '';
-          if (art.isCluster || (Array.isArray(art.relatedSources) && art.relatedSources.length > 0)) {
-            const sources = art.relatedSources || ['Associated Press', 'Reuters'];
-            clusterHtml = `
-              <div class="story-cluster-sources">
-                <span style="font-size: 10px; color: var(--thaaw-text-muted); align-self: center;">Also reported by:</span>
-                ${sources.map(s => `<span class="story-cluster-pill">${typeof s === 'string' ? s : s.name}</span>`).join('')}
-              </div>
-            `;
-          }
+          let pubDomain = '';
+          try {
+            if (art.url) pubDomain = new URL(art.url).hostname;
+          } catch (_) {}
+          const faviconUrl = pubDomain ? `https://www.google.com/s2/favicons?domain=${pubDomain}&sz=32` : '';
 
           card.innerHTML = `
             ${imgSnippet}
             <div class="news-content">
-              <div class="news-meta-row">
-                <span class="news-category-badge cat-${(art.platform || art.category || 'tech').toLowerCase().replace(/\s+/g, '-')}">${art.category || platformTag}</span>
-                <span class="news-timestamp">${art.timestamp || 'Recent'}</span>
-              </div>
               <h4 class="news-title">${art.title}</h4>
-              ${art.snippet ? `<p class="news-snippet" style="font-size: 11px; color: var(--thaaw-text-muted); margin: 4px 0 6px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${art.snippet}</p>` : ''}
-              <div class="news-source" style="font-size: 11px; color: var(--thaaw-cyan);">${art.source || 'Source'}</div>
-              ${clusterHtml}
+              <div class="news-publisher-row">
+                ${faviconUrl ? `<img class="news-publisher-icon" src="${faviconUrl}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
+                <span class="news-publisher-name">${art.source || 'News'}</span>
+              </div>
             </div>
           `;
 
@@ -1827,25 +2756,136 @@
       }
     };
 
-    // 5. WEATHER & CLOCK STATE
+    // 5. WEATHER & CLOCK STATE (Real Live Weather & Geolocation via Open-Meteo)
     const WeatherState = {
+      weatherData: null,
+
       init() {
         this.updateClock();
         setInterval(() => this.updateClock(), 1000);
-        this.updateWeatherIcon();
+        this.fetchLiveWeather();
+        // Refresh live weather periodically every 20 minutes
+        setInterval(() => this.fetchLiveWeather(), 20 * 60 * 1000);
 
         // Dynamic security data from main process
         if (window.thaawAPI && window.thaawAPI.getSecurityStatus) {
           window.thaawAPI.getSecurityStatus().then(status => {
             if (status) {
               const blocked = status.trackersBlockedCount || 0;
-              document.getElementById('shieldTrackersCount').textContent = `${blocked} Trackers Blocked`;
+              const shieldEl = document.getElementById('shieldTrackersCount');
+              if (shieldEl) shieldEl.textContent = `${blocked} Trackers Blocked`;
             }
           });
         }
       },
 
+      async fetchLiveWeather() {
+        // Check cache first for instant render
+        try {
+          const cached = localStorage.getItem('thaaw_live_weather_cache');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Date.now() - parsed.timestamp < 20 * 60 * 1000) {
+              this.applyWeatherData(parsed.data);
+              return;
+            }
+          }
+        } catch (_) {}
+
+        let lat = 34.0837;
+        let lon = 74.7974;
+        let city = 'Srinagar';
+
+        // 1. Resolve real location via IP Geolocation
+        try {
+          const ipRes = await fetch('https://ipwho.is/');
+          if (ipRes.ok) {
+            const ipData = await ipRes.json();
+            if (ipData && ipData.success && ipData.latitude && ipData.longitude) {
+              lat = ipData.latitude;
+              lon = ipData.longitude;
+              city = ipData.city || ipData.region || 'Current Location';
+            }
+          }
+        } catch (_) {
+          try {
+            const ipRes2 = await fetch('https://ipapi.co/json/');
+            if (ipRes2.ok) {
+              const ipData2 = await ipRes2.json();
+              if (ipData2 && ipData2.latitude && ipData2.longitude) {
+                lat = ipData2.latitude;
+                lon = ipData2.longitude;
+                city = ipData2.city || ipData2.region || 'Current Location';
+              }
+            }
+          } catch (_) {}
+        }
+
+        // 2. Fetch live real weather from Open-Meteo
+        try {
+          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day`;
+          const wRes = await fetch(weatherUrl);
+          if (wRes.ok) {
+            const wData = await wRes.json();
+            if (wData && wData.current) {
+              const temp = Math.round(wData.current.temperature_2m);
+              const wCode = wData.current.weather_code;
+              const isDay = wData.current.is_day === 1;
+              const { condition, icon } = this.mapWeatherCode(wCode, isDay);
+              const payload = { temp, condition, location: city, icon };
+              this.applyWeatherData(payload);
+              try {
+                localStorage.setItem('thaaw_live_weather_cache', JSON.stringify({ data: payload, timestamp: Date.now() }));
+              } catch (_) {}
+            }
+          }
+        } catch (err) {
+          console.warn('[THAAW Weather] Real-time fetch error:', err);
+        }
+      },
+
+      mapWeatherCode(code, isDay) {
+        if (code === 0) return { condition: 'Clear Sky', icon: isDay ? 'sun' : 'moon' };
+        if (code === 1) return { condition: 'Mainly Clear', icon: isDay ? 'sun' : 'moon' };
+        if (code === 2) return { condition: 'Partly Cloudy', icon: 'cloud-sun' };
+        if (code === 3) return { condition: 'Overcast', icon: 'cloud' };
+        if (code === 45 || code === 48) return { condition: 'Foggy', icon: 'cloud' };
+        if ([51, 53, 55, 56, 57].includes(code)) return { condition: 'Drizzle', icon: 'cloud-rain' };
+        if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return { condition: 'Rain', icon: 'cloud-rain' };
+        if ([71, 73, 75, 77, 85, 86].includes(code)) return { condition: 'Snow', icon: 'snowflake' };
+        if ([95, 96, 99].includes(code)) return { condition: 'Thunderstorm', icon: 'cloud-lightning' };
+        return { condition: 'Clear', icon: isDay ? 'sun' : 'moon' };
+      },
+
+      applyWeatherData(data) {
+        this.weatherData = data;
+        const tempEl = document.getElementById('weatherTemp');
+        if (tempEl) tempEl.textContent = `${data.temp}\u00B0C`;
+
+        const condEl = document.getElementById('weatherCondition');
+        if (condEl) condEl.textContent = data.condition;
+
+        const locEl = document.getElementById('weatherLocation');
+        if (locEl) locEl.textContent = data.location;
+
+        const slot = document.getElementById('weatherIconSlot');
+        if (slot) {
+          slot.setAttribute('data-icon', data.icon);
+          if (window.getSvgIcon) {
+            slot.innerHTML = window.getSvgIcon(data.icon, 20);
+          }
+        }
+      },
+
       updateWeatherIcon() {
+        if (this.weatherData && this.weatherData.icon) {
+          const slot = document.getElementById('weatherIconSlot');
+          if (slot && window.getSvgIcon) {
+            slot.setAttribute('data-icon', this.weatherData.icon);
+            slot.innerHTML = window.getSvgIcon(this.weatherData.icon, 20);
+          }
+          return;
+        }
         const slot = document.getElementById('weatherIconSlot');
         if (!slot) return;
         const isDark = (document.documentElement.getAttribute('data-theme') || 'dark') === 'dark';
@@ -1894,6 +2934,13 @@
         this.setupSearchInput();
         this.setupTopControls();
         this.renderProfiles();
+
+        // Smoothly fade bottom floating status widgets when reading down in news
+        window.addEventListener('scroll', () => {
+          const isScrolled = window.scrollY > 80;
+          document.getElementById('floatingCloudWidget')?.classList.toggle('scrolled-down', isScrolled);
+          document.querySelector('.rail-bottom-group')?.classList.toggle('scrolled-down', isScrolled);
+        }, { passive: true });
 
         // Progressive deferred startup: Chrome & shortcuts paint instantly (Req 14-20)
         setTimeout(() => {
@@ -1956,6 +3003,10 @@
           btn.addEventListener('click', (e) => {
             e.preventDefault();
             const href = btn.getAttribute('href');
+            if (href === 'thaaw://newtab' || (typeof href === 'string' && href.endsWith('newtab.html'))) {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+              return;
+            }
             if (href) HomePageState.navigate(href);
           });
         });
@@ -2237,11 +3288,17 @@
         customizeBtn?.addEventListener('click', openDrawer);
         document.getElementById('railAppsBtn')?.addEventListener('click', openDrawer);
         closeDrawerBtn?.addEventListener('click', closeDrawer);
+        document.getElementById('drawerDoneBtn')?.addEventListener('click', closeDrawer);
         drawerBackdrop?.addEventListener('click', (e) => {
           if (e.target === drawerBackdrop) closeDrawer();
         });
+        window.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && drawerBackdrop?.classList.contains('open')) {
+            closeDrawer();
+          }
+        });
 
-        // Drawer Nav Tabs (Themes / Wallpapers / Studio)
+        // Drawer Nav Tabs (Wallpapers / Transitions / Themes / Studio)
         document.querySelectorAll('.drawer-nav-tab').forEach(tab => {
           tab.addEventListener('click', () => {
             document.querySelectorAll('.drawer-nav-tab').forEach(t => t.classList.remove('active'));
@@ -2250,6 +3307,7 @@
             const target = tab.getAttribute('data-tab');
             if (target === 'themes') document.getElementById('tabThemesPane')?.classList.add('active');
             else if (target === 'wallpapers') document.getElementById('tabWallpapersPane')?.classList.add('active');
+            else if (target === 'transitions') document.getElementById('tabTransitionsPane')?.classList.add('active');
             else if (target === 'studio') document.getElementById('tabStudioPane')?.classList.add('active');
           });
         });

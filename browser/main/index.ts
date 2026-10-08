@@ -61,7 +61,9 @@ protocol.registerSchemesAsPrivileged([
       standard: true,
       secure: true,
       supportFetchAPI: true,
-      corsEnabled: true
+      corsEnabled: true,
+      stream: true,
+      bypassCSP: true
     }
   }
 ]);
@@ -71,6 +73,12 @@ let pickerWindow: BrowserWindow | null = null;
 let tabManager: TabManager | null = null;
 const profileManager = new ProfileManager();
 const trackerBlocker = new TrackerBlocker('balanced');
+try {
+  const initialSettings = profileManager.getProfileSettings();
+  if (initialSettings.adBlockerEnabled !== undefined) {
+    trackerBlocker.adBlocker.setEnabled(initialSettings.adBlockerEnabled);
+  }
+} catch {}
 const permissionManager = new PermissionManager(path.join(profileManager.getProfileDir(), 'permissions.json'));
 const downloadManager = new DownloadManager();
 const authManager = new AuthManager();
@@ -89,20 +97,37 @@ export function handleThaawProtocol(request: GlobalRequest): Promise<Response> |
   try {
     const cachedPath = protocolPathCache.get(request.url);
     if (cachedPath && fs.existsSync(cachedPath)) {
-      return net.fetch(pathToFileURL(cachedPath).toString());
+      return net.fetch(pathToFileURL(cachedPath).toString(), {
+        headers: request.headers,
+        bypassCustomProtocolHandlers: true
+      });
     }
 
     const url = new URL(request.url);
     const subpath = url.pathname.replace(/^\/+/, '');
 
     // 1. Check for assets (logos, icons, wallpapers, favicons)
-    if (url.hostname === 'assets' || subpath.startsWith('assets/') || subpath.includes('/assets/')) {
+    if (
+      url.hostname === 'assets' ||
+      url.hostname === 'wallpapers' ||
+      subpath.startsWith('assets/') ||
+      subpath.includes('/assets/') ||
+      subpath.startsWith('wallpapers/') ||
+      subpath.includes('/wallpapers/')
+    ) {
       let assetRel = '';
       if (url.hostname === 'assets') {
         assetRel = subpath;
-      } else {
+      } else if (url.hostname === 'wallpapers') {
+        assetRel = path.join('wallpapers', subpath);
+      } else if (subpath.includes('assets/')) {
         const idx = subpath.indexOf('assets/');
         assetRel = subpath.substring(idx + 7);
+      } else if (subpath.includes('wallpapers/')) {
+        const idx = subpath.indexOf('wallpapers/');
+        assetRel = subpath.substring(idx);
+      } else {
+        assetRel = subpath;
       }
 
       const candidate1 = path.join(__dirname, '..', '..', 'assets', assetRel);
@@ -113,8 +138,35 @@ export function handleThaawProtocol(request: GlobalRequest): Promise<Response> |
       for (const c of candidates) {
         if (fs.existsSync(c)) {
           protocolPathCache.set(request.url, c);
-          return net.fetch(pathToFileURL(c).toString());
+          return net.fetch(pathToFileURL(c).toString(), {
+            headers: request.headers,
+            bypassCustomProtocolHandlers: true
+          });
         }
+      }
+    }
+
+    // 1b. Check for custom uploaded wallpapers (persistent storage in userData/custom-wallpapers)
+    if (
+      url.hostname === 'custom-wallpapers' ||
+      subpath.startsWith('custom-wallpapers/') ||
+      subpath.startsWith('wallpapers/custom/')
+    ) {
+      let customFilename = '';
+      if (url.hostname === 'custom-wallpapers') {
+        customFilename = subpath;
+      } else if (subpath.startsWith('custom-wallpapers/')) {
+        customFilename = subpath.replace(/^custom-wallpapers\//, '');
+      } else if (subpath.startsWith('wallpapers/custom/')) {
+        customFilename = subpath.replace(/^wallpapers\/custom\//, '');
+      }
+      const customPath = path.join(app.getPath('userData'), 'custom-wallpapers', customFilename);
+      if (fs.existsSync(customPath)) {
+        protocolPathCache.set(request.url, customPath);
+        return net.fetch(pathToFileURL(customPath).toString(), {
+          headers: request.headers,
+          bypassCustomProtocolHandlers: true
+        });
       }
     }
 
@@ -430,6 +482,9 @@ function applyActiveProfile(profileId: string, resetTabs: boolean = false): bool
   if (settings.protectionLevel) {
     trackerBlocker.setProtectionLevel(settings.protectionLevel as ProtectionLevel);
   }
+  if (settings.adBlockerEnabled !== undefined) {
+    trackerBlocker.adBlocker.setEnabled(settings.adBlockerEnabled);
+  }
 
   // Broadcast to mainWindow and tabs
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -593,14 +648,145 @@ function setupIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('wallpaper:set', (_event, wallpaper: string) => {
+  ipcMain.handle('wallpaper:set', (_event, wallpaper: string, options?: any) => {
     const updated = profileManager.updateProfileSettings({ wallpaper });
     const wp = updated.wallpaper || 'default';
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('browser:wallpaper-updated', wp);
+
+    // Resolve local fileUrl and isVideo if custom wallpaper
+    let fileUrl: string | undefined;
+    let isVideo: boolean | undefined = options?.isVideo;
+    if (wp && (wp.startsWith('thaaw://custom-wallpapers/') || wp.startsWith('custom-'))) {
+      const filename = wp.startsWith('thaaw://custom-wallpapers/') ? wp.replace('thaaw://custom-wallpapers/', '') : '';
+      const list = getCustomWallpapersList();
+      const match = list.find((c: any) => c.url === wp || c.id === wp || (filename && c.filename === filename));
+      if (match) {
+        const fullPath = path.join(customWallpapersDir, match.filename);
+        if (fs.existsSync(fullPath)) {
+          fileUrl = pathToFileURL(fullPath).toString();
+        }
+        if (match.isVideo) isVideo = true;
+      }
     }
-    tabManager?.broadcast('browser:wallpaper-updated', wp);
-    return { success: true, wallpaper: wp };
+    const finalOptions = { ...options, ...(fileUrl ? { fileUrl } : {}), ...(isVideo !== undefined ? { isVideo } : {}) };
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('browser:wallpaper-updated', wp, finalOptions);
+    }
+    tabManager?.broadcast('browser:wallpaper-updated', wp, finalOptions);
+    return { success: true, wallpaper: wp, fileUrl, isVideo };
+  });
+
+  // Custom Wallpaper Management (Persistent storage in userData/custom-wallpapers)
+  const customWallpapersDir = path.join(app.getPath('userData'), 'custom-wallpapers');
+  const customWallpapersMetaFile = path.join(app.getPath('userData'), 'custom-wallpapers.json');
+
+  const ensureCustomWallpapersDir = () => {
+    try {
+      if (!fs.existsSync(customWallpapersDir)) {
+        fs.mkdirSync(customWallpapersDir, { recursive: true });
+      }
+    } catch {}
+  };
+
+  const getCustomWallpapersList = (): any[] => {
+    try {
+      if (fs.existsSync(customWallpapersMetaFile)) {
+        const raw = fs.readFileSync(customWallpapersMetaFile, 'utf8');
+        return JSON.parse(raw);
+      }
+    } catch {}
+    return [];
+  };
+
+  const saveCustomWallpapersList = (list: any[]) => {
+    try {
+      ensureCustomWallpapersDir();
+      fs.writeFileSync(customWallpapersMetaFile, JSON.stringify(list, null, 2), 'utf8');
+    } catch {}
+  };
+
+  ipcMain.handle('wallpaper:get-custom-list', () => {
+    const list = getCustomWallpapersList();
+    return list.map((item: any) => {
+      const fullPath = path.join(customWallpapersDir, item.filename);
+      const isVid = !!item.isVideo || /\.(mp4|webm|mov|m4v|ogg)$/i.test(item.filename || '');
+      return {
+        ...item,
+        isVideo: isVid,
+        fileUrl: fs.existsSync(fullPath) ? pathToFileURL(fullPath).toString() : item.url
+      };
+    });
+  });
+
+  ipcMain.handle('wallpaper:upload-custom', async (_event, payload: { name: string; isVideo?: boolean; originalName?: string; filePath?: string; buffer?: ArrayBuffer | Uint8Array; base64?: string }) => {
+    try {
+      ensureCustomWallpapersDir();
+      const id = 'custom-' + Date.now();
+      let ext = payload.isVideo ? 'mp4' : 'webp';
+      const checkName = payload.originalName || payload.name || payload.filePath || '';
+      if (checkName && checkName.includes('.')) {
+        const parts = checkName.split('.');
+        const last = parts[parts.length - 1].toLowerCase();
+        if (['mp4', 'webm', 'mov', 'm4v', 'ogg', 'webp', 'jpg', 'jpeg', 'png', 'gif', 'svg'].includes(last)) {
+          ext = last;
+        }
+      }
+      const filename = `${id}.${ext}`;
+      const destPath = path.join(customWallpapersDir, filename);
+
+      if (payload.filePath && fs.existsSync(payload.filePath)) {
+        fs.copyFileSync(payload.filePath, destPath);
+      } else if (payload.buffer) {
+        const buf = Buffer.isBuffer(payload.buffer) ? payload.buffer : Buffer.from(payload.buffer as any);
+        fs.writeFileSync(destPath, buf);
+      } else if (payload.base64) {
+        const cleanBase64 = payload.base64.replace(/^data:[^;]+;base64,/, '');
+        fs.writeFileSync(destPath, Buffer.from(cleanBase64, 'base64'));
+      } else {
+        return { success: false, error: 'No file data provided' };
+      }
+
+      const isVid = !!payload.isVideo || ['mp4', 'webm', 'mov', 'm4v', 'ogg'].includes(ext);
+      const fileUrl = pathToFileURL(destPath).toString();
+      const item = {
+        id,
+        name: payload.name || 'Custom Wallpaper',
+        filename,
+        url: `thaaw://custom-wallpapers/${filename}`,
+        fileUrl,
+        filePath: destPath,
+        isVideo: isVid,
+        createdAt: Date.now()
+      };
+
+      const list = getCustomWallpapersList();
+      list.unshift(item);
+      saveCustomWallpapersList(list);
+
+      return { success: true, item, list };
+    } catch (err: any) {
+      console.error('[THAAW Wallpaper] Error uploading custom wallpaper:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('wallpaper:delete-custom', async (_event, id: string) => {
+    try {
+      const list = getCustomWallpapersList();
+      const idx = list.findIndex((c: any) => c.id === id);
+      if (idx !== -1) {
+        const [removed] = list.splice(idx, 1);
+        const filePath = path.join(customWallpapersDir, removed.filename);
+        if (fs.existsSync(filePath)) {
+          try { fs.unlinkSync(filePath); } catch (_) {}
+        }
+        saveCustomWallpapersList(list);
+      }
+      return { success: true, list };
+    } catch (err: any) {
+      console.error('[THAAW Wallpaper] Error deleting custom wallpaper:', err);
+      return { success: false, error: err.message };
+    }
   });
 
   // History IPC (Scoped to active profile)
@@ -931,7 +1117,7 @@ function setupIpcHandlers(): void {
 
   // News Provider & Reader IPC
   ipcMain.handle('news:get', async (_event, category?: string, page?: number, view?: string) =>
-    newsProvider.getNews(category, page, 8, view)
+    newsProvider.getNews(category, page, 16, view)
   );
   ipcMain.handle('news:get-rss-feeds', () => newsProvider.getCustomRssFeeds());
   ipcMain.handle('news:add-rss-feed', async (_event, { url, name, category }) =>
@@ -986,6 +1172,7 @@ function setupIpcHandlers(): void {
   ipcMain.handle('adblock:toggle', (_event, enabled?: boolean) => {
     const newState = enabled !== undefined ? enabled : !trackerBlocker.adBlocker.isEnabled();
     trackerBlocker.adBlocker.setEnabled(newState);
+    profileManager.updateProfileSettings({ adBlockerEnabled: newState });
     return { enabled: newState };
   });
 
@@ -1202,6 +1389,9 @@ function setupIpcHandlers(): void {
     }
     if (patch.protectionLevel) {
       trackerBlocker.setProtectionLevel(patch.protectionLevel as ProtectionLevel);
+    }
+    if (patch.adBlockerEnabled !== undefined) {
+      trackerBlocker.adBlocker.setEnabled(patch.adBlockerEnabled);
     }
     if ((patch.defaultSearchEngine || patch.customSearchUrl !== undefined) && tabManager) {
       const engine = patch.defaultSearchEngine || profileManager.getProfileSettings().defaultSearchEngine || 'duckduckgo';

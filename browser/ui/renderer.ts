@@ -73,7 +73,10 @@ interface ThaawAPIBridge {
   getTheme(): Promise<{ theme: string; preset?: string }>;
   setTheme(theme: string, preset?: string): Promise<{ success: boolean; theme: string; preset?: string }>;
   getWallpaper?(): Promise<string>;
-  setWallpaper?(wallpaper: string): Promise<{ success: boolean; wallpaper: string }>;
+  setWallpaper?(wallpaper: string, options?: any): Promise<{ success: boolean; wallpaper: string; fileUrl?: string; isVideo?: boolean }>;
+  getCustomWallpapers?(): Promise<any[]>;
+  uploadCustomWallpaper?(payload: any): Promise<any>;
+  deleteCustomWallpaper?(id: string): Promise<any>;
   getHistory(query?: string): Promise<any[]>;
   deleteHistoryItem(id: string): Promise<boolean>;
   clearHistory(): Promise<boolean>;
@@ -190,7 +193,7 @@ interface ThaawAPIBridge {
   onAuthChanged?(callback: (user: any) => void): () => void;
   onMinimalModeChanged?(callback: (enabled: boolean) => void): () => void;
   getWallpaper?(): Promise<string>;
-  setWallpaper?(wallpaper: string): Promise<any>;
+  setWallpaper?(wallpaper: string, options?: any): Promise<any>;
   saveWallpaperFromUrl?(url: string): Promise<any>;
   onViewImageFullscreen?(callback: (url: string) => void): () => void;
   onZoomChanged?(callback: (zoom: number) => void): () => void;
@@ -760,16 +763,151 @@ function updateSecurityIndicator(url: string): void {
 let currentThemeMode = 'dark';
 let currentThemePreset = 'midnight';
 
-function syncChromeWallpaper(wallpaperId?: string): void {
+const WALLPAPER_FILE_MAP: Record<string, string> = {
+  'midnight-mountains': 'thaaw-midnight-mountains.webp',
+  'blue-horizon': 'thaaw-blue-horizon.webp',
+  'orange-dusk': 'thaaw-orange-dusk.webp',
+  'cyan-mist': 'thaaw-cyan-mist.webp',
+  'pink-night': 'thaaw-pink-night.webp',
+  'dark-ocean': 'thaaw-dark-ocean.webp',
+  'abstract-flow': 'thaaw-abstract-flow.webp',
+  'night-forest': 'thaaw-night-forest.webp',
+  'modern-architecture': 'thaaw-modern-architecture.webp',
+  'deep-space': 'thaaw-deep-space.webp',
+  'mist-valley': 'thaaw-mist-valley.webp',
+  'abstract-geometry': 'thaaw-abstract-geometry.webp',
+  'night-city': 'thaaw-night-city.webp',
+  'polar-mist': 'thaaw-polar-mist.webp',
+  'thaaw-signature': 'thaaw-signature.webp',
+  'signature': 'thaaw-signature.webp'
+};
+
+function resolveWallpaperFilename(wpId: string): string {
+  if (!wpId) return 'thaaw-midnight-mountains.webp';
+  const clean = wpId.trim();
+  const normalized = clean.replace(/^thaaw-/, '').replace(/\.webp$/, '');
+  if (WALLPAPER_FILE_MAP[clean]) return WALLPAPER_FILE_MAP[clean];
+  if (WALLPAPER_FILE_MAP[normalized]) return WALLPAPER_FILE_MAP[normalized];
+  if (clean.startsWith('light-')) {
+    return `light/${clean.endsWith('.webp') ? clean : clean + '.webp'}`;
+  }
+  if (clean.startsWith('light/')) {
+    return clean.endsWith('.webp') ? clean : `${clean}.webp`;
+  }
+  if (clean.startsWith('thaaw-')) {
+    return clean.endsWith('.webp') ? clean : `${clean}.webp`;
+  }
+  return clean.endsWith('.webp') ? clean : `thaaw-${clean}.webp`;
+}
+
+interface CustomWallpaperMeta {
+  id: string;
+  name: string;
+  filename: string;
+  url: string;
+  fileUrl?: string;
+  isVideo?: boolean;
+}
+
+const customWallpaperMetaMap = new Map<string, CustomWallpaperMeta>();
+
+function registerCustomWallpaper(item: any): void {
+  if (!item) return;
+  const meta: CustomWallpaperMeta = {
+    id: item.id || '',
+    name: item.name || '',
+    filename: item.filename || '',
+    url: item.url || '',
+    fileUrl: item.fileUrl || item.url || '',
+    isVideo: !!item.isVideo
+  };
+  if (meta.id) customWallpaperMetaMap.set(meta.id, meta);
+  if (meta.url) customWallpaperMetaMap.set(meta.url, meta);
+  if (meta.filename) customWallpaperMetaMap.set(meta.filename, meta);
+}
+
+function isVideoWallpaper(wpId?: string, isVideoHint?: boolean): boolean {
+  if (isVideoHint !== undefined) return !!isVideoHint;
+  if (!wpId) return false;
+  const clean = wpId.trim().toLowerCase();
+  if (clean.startsWith('data:video/')) return true;
+  const noQuery = clean.split('?')[0].split('#')[0];
+  if (noQuery.endsWith('.mp4') || noQuery.endsWith('.webm') || noQuery.endsWith('.mov') || noQuery.endsWith('.m4v') || noQuery.endsWith('.ogg')) {
+    return true;
+  }
+  const meta = customWallpaperMetaMap.get(wpId);
+  if (meta && meta.isVideo) return true;
+  return false;
+}
+
+let currentActiveChromeWallpaper = '';
+let currentChromeWallpaperAnim: Animation | null = null;
+
+function resolveWallpaperTargetUrl(wpId: string, options?: { fileUrl?: string }): string {
+  if (!wpId || wpId === 'none') return '';
+  if (options?.fileUrl) {
+    return options.fileUrl;
+  }
+  const meta = customWallpaperMetaMap.get(wpId);
+  if (meta?.fileUrl) {
+    return meta.fileUrl;
+  }
+  if (wpId.startsWith('thaaw://custom-wallpapers/')) {
+    const filename = wpId.replace('thaaw://custom-wallpapers/', '');
+    const metaByFn = customWallpaperMetaMap.get(filename);
+    if (metaByFn?.fileUrl) return metaByFn.fileUrl;
+    return wpId;
+  }
+  if (wpId.startsWith('http://') || wpId.startsWith('https://') || wpId.startsWith('data:') || wpId.startsWith('file://') || wpId.startsWith('thaaw://')) {
+    return wpId;
+  }
+  const file = resolveWallpaperFilename(wpId);
+  return `../../assets/wallpapers/${file}`;
+}
+
+function syncChromeWallpaper(wallpaperId?: string, options?: { transition?: string; duration?: number; force?: boolean; fileUrl?: string; isVideo?: boolean }): void {
   const layer = document.getElementById('chromeWallpaperLayer');
+  const layerIncoming = document.getElementById('chromeWallpaperLayerIncoming');
+  const videoEl = document.getElementById('chromeWallpaperVideo') as HTMLVideoElement | null;
+  const videoIncoming = document.getElementById('chromeWallpaperVideoIncoming') as HTMLVideoElement | null;
   if (!layer) return;
 
-  const applyWp = (wpId: string) => {
+  const applyDirectly = (wpId: string) => {
+    currentActiveChromeWallpaper = wpId;
     layer.className = 'chrome-wallpaper-layer';
+    const isVideo = (options && options.isVideo !== undefined) ? !!options.isVideo : isVideoWallpaper(wpId);
+
+    if (isVideo && videoEl) {
+      layer.style.backgroundImage = 'none';
+      layer.style.backgroundColor = 'transparent';
+      videoEl.style.display = 'block';
+      videoEl.style.opacity = '1';
+      videoEl.style.transform = 'none';
+      videoEl.style.filter = 'none';
+      const targetUrl = resolveWallpaperTargetUrl(wpId, options);
+      if (videoEl.getAttribute('src') !== targetUrl) {
+        videoEl.src = targetUrl;
+      }
+      videoEl.play().catch(() => {});
+      return;
+    }
+
+    if (videoEl) {
+      videoEl.pause();
+      videoEl.removeAttribute('src');
+      videoEl.load();
+      videoEl.style.display = 'none';
+    }
+
+    layer.style.opacity = '1';
+    layer.style.transform = 'none';
+    layer.style.filter = 'none';
+
     if (wpId === 'none') {
       layer.style.backgroundImage = 'none';
       layer.style.backgroundColor = currentThemeMode === 'light' ? '#F8FAFC' : '#050812';
     } else if (!wpId || wpId === 'default') {
+      layer.classList.add('default-bg');
       if (currentThemeMode === 'light') {
         layer.style.backgroundImage = 'url("../../assets/wallpapers/light/light-13.webp")';
         layer.style.backgroundColor = '#FAF9F6';
@@ -777,29 +915,172 @@ function syncChromeWallpaper(wallpaperId?: string): void {
         layer.style.backgroundImage = 'url("../../assets/wallpapers/thaaw-midnight-mountains.webp")';
         layer.style.backgroundColor = '#050812';
       }
-    } else if (wpId.startsWith('http://') || wpId.startsWith('https://') || wpId.startsWith('data:') || wpId.startsWith('file://')) {
-      layer.style.backgroundImage = `url("${wpId}")`;
-      layer.style.backgroundColor = currentThemeMode === 'light' ? '#F8FAFC' : '#050812';
     } else {
-      const file = wpId.endsWith('.webp') ? wpId : (wpId.startsWith('light-') ? `light/${wpId}.webp` : `${wpId}.webp`);
-      layer.style.backgroundImage = `url("../../assets/wallpapers/${file}")`;
+      const url = resolveWallpaperTargetUrl(wpId, options);
+      layer.style.backgroundImage = `url("${url}")`;
       layer.style.backgroundColor = currentThemeMode === 'light' ? '#F8FAFC' : '#050812';
     }
   };
 
+  const applyWithTransition = (nextWp: string, effect: string, duration: number, force?: boolean) => {
+    if (!layerIncoming || effect === 'none') {
+      applyDirectly(nextWp);
+      return;
+    }
+
+    if (!currentActiveChromeWallpaper && !force) {
+      applyDirectly(nextWp);
+      return;
+    }
+
+    if (currentActiveChromeWallpaper === nextWp && !force) {
+      applyDirectly(nextWp);
+      return;
+    }
+
+    if (currentChromeWallpaperAnim) {
+      try { currentChromeWallpaperAnim.cancel(); } catch (_) {}
+      currentChromeWallpaperAnim = null;
+    }
+
+    const nextIsVideo = (options && options.isVideo !== undefined) ? !!options.isVideo : isVideoWallpaper(nextWp);
+    const currIsVideo = isVideoWallpaper(currentActiveChromeWallpaper);
+
+    const incomingEl = nextIsVideo ? videoIncoming : layerIncoming;
+    const outgoingEl = currIsVideo ? videoEl : layer;
+
+    if (!incomingEl || !outgoingEl) {
+      applyDirectly(nextWp);
+      return;
+    }
+
+    // Prepare incoming element
+    if (nextIsVideo && videoIncoming) {
+      const targetUrl = resolveWallpaperTargetUrl(nextWp, options);
+      videoIncoming.src = targetUrl;
+      videoIncoming.style.display = 'block';
+      videoIncoming.style.opacity = '0';
+      videoIncoming.currentTime = 0;
+      videoIncoming.play().catch(() => {});
+    } else if (!nextIsVideo && layerIncoming) {
+      if (nextWp === 'none') {
+        layerIncoming.style.backgroundImage = 'none';
+        layerIncoming.style.backgroundColor = currentThemeMode === 'light' ? '#F8FAFC' : '#050812';
+      } else if (!nextWp || nextWp === 'default') {
+        layerIncoming.className = 'chrome-wallpaper-layer incoming default-bg';
+        const defImg = currentThemeMode === 'light' ? 'light/light-13.webp' : 'thaaw-midnight-mountains.webp';
+        layerIncoming.style.backgroundImage = `url("../../assets/wallpapers/${defImg}")`;
+      } else {
+        layerIncoming.className = 'chrome-wallpaper-layer incoming';
+        const url = resolveWallpaperTargetUrl(nextWp, options);
+        layerIncoming.style.backgroundImage = `url("${url}")`;
+      }
+      layerIncoming.style.display = 'block';
+      layerIncoming.style.opacity = '0';
+    }
+
+    // Keyframes for chosen effect
+    let inKeyframes: Keyframe[] = [];
+    let outKeyframes: Keyframe[] = [];
+    const inOptions: KeyframeAnimationOptions = { duration, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'forwards' };
+    const outOptions: KeyframeAnimationOptions = { duration, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'forwards' };
+
+    switch (effect) {
+      case 'zoom':
+        inKeyframes = [{ opacity: 0, transform: 'scale(1.15)' }, { opacity: 1, transform: 'scale(1)' }];
+        outKeyframes = [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(0.95)' }];
+        break;
+      case 'slide-left':
+        inKeyframes = [{ transform: 'translateX(100%)', opacity: 1 }, { transform: 'translateX(0%)', opacity: 1 }];
+        outKeyframes = [{ transform: 'translateX(0%)', opacity: 1 }, { transform: 'translateX(-30%)', opacity: 0.3 }];
+        break;
+      case 'slide-right':
+        inKeyframes = [{ transform: 'translateX(-100%)', opacity: 1 }, { transform: 'translateX(0%)', opacity: 1 }];
+        outKeyframes = [{ transform: 'translateX(0%)', opacity: 1 }, { transform: 'translateX(30%)', opacity: 0.3 }];
+        break;
+      case 'slide-up':
+        inKeyframes = [{ transform: 'translateY(100%)', opacity: 1 }, { transform: 'translateY(0%)', opacity: 1 }];
+        outKeyframes = [{ transform: 'translateY(0%)', opacity: 1 }, { transform: 'translateY(-25%)', opacity: 0.3 }];
+        break;
+      case 'blur':
+        inKeyframes = [{ opacity: 0, filter: 'blur(32px) scale(1.05)' }, { opacity: 1, filter: 'none scale(1)' }];
+        outKeyframes = [{ opacity: 1, filter: 'none scale(1)' }, { opacity: 0, filter: 'blur(32px) scale(0.96)' }];
+        break;
+      case 'flash':
+        inKeyframes = [{ opacity: 0, filter: 'brightness(2.2) contrast(1.1)' }, { opacity: 1, filter: 'none' }];
+        outKeyframes = [{ opacity: 1 }, { opacity: 0 }];
+        inOptions.duration = duration * 0.7;
+        break;
+      case 'crossfade':
+      default:
+        inKeyframes = [{ opacity: 0 }, { opacity: 1 }];
+        outKeyframes = [{ opacity: 1 }, { opacity: 0 }];
+        break;
+    }
+
+    try {
+      const animIn = incomingEl.animate(inKeyframes, inOptions);
+      const animOut = outgoingEl.animate(outKeyframes, outOptions);
+
+      const cleanup = () => {
+        applyDirectly(nextWp);
+        if (incomingEl) {
+          incomingEl.style.display = 'none';
+          incomingEl.style.opacity = '0';
+          incomingEl.style.transform = 'none';
+          incomingEl.style.filter = 'none';
+          if (nextIsVideo && videoIncoming) {
+            videoIncoming.pause();
+            videoIncoming.removeAttribute('src');
+            videoIncoming.load();
+          }
+        }
+        if (outgoingEl) {
+          outgoingEl.style.transform = 'none';
+          outgoingEl.style.filter = 'none';
+        }
+        try { animIn.cancel(); animOut.cancel(); } catch (_) {}
+        currentChromeWallpaperAnim = null;
+      };
+
+      animIn.onfinish = cleanup;
+      currentChromeWallpaperAnim = animIn;
+    } catch {
+      applyDirectly(nextWp);
+    }
+  };
+
+  const handleWp = (wpId: string) => {
+    if (options && options.transition && options.transition !== 'none') {
+      applyWithTransition(wpId, options.transition, options.duration || 700, !!options.force || currentActiveChromeWallpaper === wpId);
+    } else {
+      let effect = 'none';
+      let duration = 700;
+      try {
+        effect = localStorage.getItem('thaaw_wallpaper_transition') || 'crossfade';
+        duration = parseInt(localStorage.getItem('thaaw_wallpaper_transition_duration') || '700', 10);
+      } catch (_) {}
+      if (currentActiveChromeWallpaper && currentActiveChromeWallpaper !== wpId && effect !== 'none') {
+        applyWithTransition(wpId, effect, duration, false);
+      } else {
+        applyDirectly(wpId);
+      }
+    }
+  };
+
   if (wallpaperId) {
-    applyWp(wallpaperId);
+    handleWp(wallpaperId);
     return;
   }
 
   if (window.thaawAPI?.getWallpaper) {
     window.thaawAPI.getWallpaper().then((wp: string) => {
-      applyWp(wp || 'default');
+      handleWp(wp || 'default');
     }).catch(() => {
-      applyWp('default');
+      handleWp('default');
     });
   } else {
-    applyWp('default');
+    handleWp('default');
   }
 }
 
@@ -811,6 +1092,16 @@ function applyThemeToDOM(theme: string, preset?: string): void {
     document.documentElement.setAttribute('data-theme-preset', preset);
   }
   syncChromeWallpaper();
+}
+
+// Fetch and cache custom wallpapers list on startup
+if (window.thaawAPI?.getCustomWallpapers) {
+  window.thaawAPI.getCustomWallpapers().then((list: any[]) => {
+    if (Array.isArray(list)) {
+      list.forEach((item: any) => registerCustomWallpaper(item));
+      syncChromeWallpaper();
+    }
+  }).catch(() => {});
 }
 
 // Initialize Theme & Wallpaper
@@ -825,8 +1116,16 @@ window.thaawAPI.onThemeUpdated((data) => {
   applyThemeToDOM(data.theme, data.preset);
 });
 
-window.thaawAPI.onWallpaperUpdated?.((wp: string) => {
-  syncChromeWallpaper(wp);
+window.thaawAPI.onWallpaperUpdated?.((wp: string, options?: any) => {
+  if (options?.fileUrl) {
+    registerCustomWallpaper({
+      id: wp,
+      url: wp,
+      fileUrl: options.fileUrl,
+      isVideo: options.isVideo
+    });
+  }
+  syncChromeWallpaper(wp, options);
 });
 
 window.addEventListener('storage', (e) => {

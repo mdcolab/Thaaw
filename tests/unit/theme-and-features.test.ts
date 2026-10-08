@@ -103,6 +103,69 @@ describe('THAAW Browser Themes, Wallpapers & Functionality Verification', () => 
     });
   });
 
+  describe('Wallpaper Layer & Rendering Integrity', () => {
+    it('verifies internal.css does not hide wallpaper layers in inside-thaaw-chrome mode', () => {
+      const css = fs.readFileSync(path.join(rootDir, 'browser/internal-pages/internal.css'), 'utf8');
+      expect(css).not.toMatch(/body\.inside-thaaw-chrome\s+#wallpaperLayer\s*,\s*body\.inside-thaaw-chrome\s+\.newtab-wallpaper-layer\s*\{\s*display:\s*none\s*!important/);
+      expect(css).not.toMatch(/body\.inside-thaaw-chrome\s+#wallpaperOverlay\s*,\s*body\.inside-thaaw-chrome\s+\.newtab-wallpaper-overlay\s*\{\s*display:\s*none\s*!important/);
+    });
+
+    it('verifies newtab.html includes wallpaper video element, dimmer overlay, and complete setWallpaper handler', () => {
+      const html = fs.readFileSync(path.join(rootDir, 'browser/internal-pages/newtab.html'), 'utf8');
+      expect(html).toContain('id="wallpaperLayer"');
+      expect(html).toContain('id="wallpaperVideo"');
+      expect(html).toContain('id="wallpaperOverlay"');
+      expect(html).toContain('setWallpaper(wpId, notify = true, isVideo = false)');
+      expect(html).toContain('overlayOpacityRange');
+      expect(html).toContain('blurIntensityRange');
+    });
+
+    it('verifies renderer.ts maps dark wallpaper IDs correctly to files with thaaw- prefix', () => {
+      const rendererTs = fs.readFileSync(path.join(rootDir, 'browser/ui/renderer.ts'), 'utf8');
+      expect(rendererTs).toContain('WALLPAPER_FILE_MAP');
+      expect(rendererTs).toContain("'midnight-mountains': 'thaaw-midnight-mountains.webp'");
+      expect(rendererTs).toContain("'blue-horizon': 'thaaw-blue-horizon.webp'");
+      expect(rendererTs).toContain('resolveWallpaperFilename');
+    });
+  });
+
+  describe('Custom Wallpapers and Video Support Verification', () => {
+    it('verifies thaaw scheme has stream and bypassCSP privileges in main/index.ts', () => {
+      const mainTs = fs.readFileSync(path.join(rootDir, 'browser/main/index.ts'), 'utf8');
+      expect(mainTs).toContain("scheme: 'thaaw'");
+      expect(mainTs).toContain('stream: true');
+      expect(mainTs).toContain('bypassCSP: true');
+    });
+
+    it('verifies handleThaawProtocol forwards range headers for custom-wallpapers', () => {
+      const mainTs = fs.readFileSync(path.join(rootDir, 'browser/main/index.ts'), 'utf8');
+      expect(mainTs).toContain("url.hostname === 'custom-wallpapers'");
+      expect(mainTs).toContain('headers: request.headers');
+      expect(mainTs).toContain('bypassCustomProtocolHandlers: true');
+    });
+
+    it('verifies updateActiveWallpaperUI method is explicitly defined in newtab.html', () => {
+      const newtabHtml = fs.readFileSync(path.join(rootDir, 'browser/internal-pages/newtab.html'), 'utf8');
+      expect(newtabHtml).toContain('updateActiveWallpaperUI(wpId)');
+      expect(newtabHtml).toContain("document.querySelectorAll('.wallpaper-card-15')");
+      expect(newtabHtml).toContain("document.querySelectorAll('#myWallpapersGrid .wallpaper-card-15')");
+    });
+
+    it('verifies renderer.ts caches and resolves custom wallpaper file URLs', () => {
+      const rendererTs = fs.readFileSync(path.join(rootDir, 'browser/ui/renderer.ts'), 'utf8');
+      expect(rendererTs).toContain('customWallpaperMetaMap');
+      expect(rendererTs).toContain('registerCustomWallpaper');
+      expect(rendererTs).toContain('getCustomWallpapers');
+      expect(rendererTs).toContain('resolveWallpaperTargetUrl');
+    });
+
+    it('verifies isVideo detection supports custom video filenames and MIME types', () => {
+      const rendererTs = fs.readFileSync(path.join(rootDir, 'browser/ui/renderer.ts'), 'utf8');
+      expect(rendererTs).toContain("noQuery.endsWith('.mp4')");
+      expect(rendererTs).toContain("noQuery.endsWith('.webm')");
+    });
+  });
+
   describe('Zero Emojis in JSON configurations', () => {
     const emojiRegex = /[\u{1F300}-\u{1F5FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u;
 
@@ -114,3 +177,5 @@ describe('THAAW Browser Themes, Wallpapers & Functionality Verification', () => 
     });
   });
 });
+
+

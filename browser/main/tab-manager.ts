@@ -179,6 +179,7 @@ export class TabManager {
       this.profileManager.updateProfileSettings({ wallpaper: imageUrl });
     }
     this.broadcastToWindow('browser:wallpaper-updated', imageUrl);
+    this.broadcast('browser:wallpaper-updated', imageUrl);
     this.broadcastToWindow('browser:show-toast', { message: 'Image set as browser wallpaper', type: 'info' });
   }
 
@@ -623,7 +624,7 @@ export class TabManager {
         !currentUrl.startsWith('about:') &&
         !currentUrl.startsWith('view-source:')
       ) {
-        if (this.trackerBlocker.isShieldActiveForDomain(currentUrl)) {
+        if (this.trackerBlocker.isAdBlockerEnabled() && this.trackerBlocker.isShieldActiveForDomain(currentUrl)) {
           webContents.insertCSS(AdBlocker.COSMETIC_FILTERS_CSS).catch(() => {});
         }
       }

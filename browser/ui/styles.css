@@ -94,15 +94,43 @@ input:focus, textarea:focus {
 }
 
 /* Atmospheric Full-Window Wallpaper Layer for Chrome Translucency */
-.chrome-wallpaper-layer {
+.chrome-wallpaper-container {
   position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.chrome-wallpaper-layer {
+  position: absolute;
   inset: 0;
   z-index: 0;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
   pointer-events: none;
-  transition: background-image 0.4s ease, opacity 0.4s ease;
+  will-change: opacity, transform, filter;
+}
+
+.chrome-wallpaper-layer.incoming {
+  z-index: 1;
+}
+
+.chrome-video-wallpaper {
+  position: absolute;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
+  z-index: 0;
+  pointer-events: none;
+  display: none;
+  will-change: opacity, transform, filter;
+}
+
+.chrome-video-wallpaper.incoming {
+  z-index: 1;
 }
 
 .chrome-wallpaper-layer.default-bg {

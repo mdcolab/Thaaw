@@ -9,8 +9,13 @@
 </head>
 <body>
   <div id="app" class="browser-chrome">
-    <!-- Atmospheric Wallpaper Layer for Chrome Translucency -->
-    <div id="chromeWallpaperLayer" class="chrome-wallpaper-layer default-bg"></div>
+    <!-- Atmospheric Wallpaper Layer for Chrome Translucency & Full-Window Background -->
+    <div id="chromeWallpaperContainer" class="chrome-wallpaper-container">
+      <div id="chromeWallpaperLayer" class="chrome-wallpaper-layer default-bg"></div>
+      <div id="chromeWallpaperLayerIncoming" class="chrome-wallpaper-layer incoming" style="display: none; opacity: 0;"></div>
+      <video id="chromeWallpaperVideo" class="chrome-video-wallpaper" autoplay loop muted playsinline style="display: none;"></video>
+      <video id="chromeWallpaperVideoIncoming" class="chrome-video-wallpaper incoming" autoplay loop muted playsinline style="display: none;"></video>
+    </div>
     <div id="tabSnapshotLayer" class="tab-snapshot-layer hidden"></div>
 
     <!-- Top Tab Strip -->

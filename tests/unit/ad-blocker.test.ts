@@ -40,6 +40,23 @@ describe('AdBlocker Subsystem', () => {
       expect(res.reason).toContain('YouTube video ad');
     });
 
+    it('should intercept video ad platforms across web articles and players', () => {
+      const videoAdUrls = [
+        'https://imasdk.googleapis.com/js/sdkloader/ima3.js',
+        'https://cdx.connatix.com/player/connatix.js',
+        'https://live.primis.tech/live/liveView.php',
+        'https://anyclip.com/assets/player.js',
+        'https://pubads.g.doubleclick.net/gampad/ads?env=vp',
+        'https://scripts.mediavine.com/tags/news.js',
+        'https://ads.adthrive.com/sites/123/ads.min.js'
+      ];
+
+      for (const url of videoAdUrls) {
+        const res = adBlocker.shouldBlockAd(url, 'https://article-site.com');
+        expect(res.block).toBe(true);
+      }
+    });
+
     it('should not block benign non-ad content', () => {
       const benignUrls = [
         'https://en.wikipedia.org/wiki/Linux',
@@ -56,10 +73,14 @@ describe('AdBlocker Subsystem', () => {
   });
 
   describe('Cosmetic Filters', () => {
-    it('should provide cosmetic element-hiding CSS rules', () => {
+    it('should provide cosmetic element-hiding CSS rules for videos, articles, and banners', () => {
       expect(AdBlocker.COSMETIC_FILTERS_CSS).toBeDefined();
       expect(AdBlocker.COSMETIC_FILTERS_CSS).toContain('adsbygoogle');
       expect(AdBlocker.COSMETIC_FILTERS_CSS).toContain('ytd-ad-slot-renderer');
+      expect(AdBlocker.COSMETIC_FILTERS_CSS).toContain('connatix');
+      expect(AdBlocker.COSMETIC_FILTERS_CSS).toContain('primis');
+      expect(AdBlocker.COSMETIC_FILTERS_CSS).toContain('taboola');
+      expect(AdBlocker.COSMETIC_FILTERS_CSS).toContain('OUTBRAIN');
       expect(AdBlocker.COSMETIC_FILTERS_CSS).toContain('display: none !important');
     });
   });
