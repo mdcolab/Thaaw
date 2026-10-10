@@ -4,7 +4,7 @@
  * Security-first, privacy-by-default Chromium architecture.
  */
 
-import { app, BrowserWindow, protocol, session, ipcMain, net, Menu, MenuItem, clipboard, nativeTheme } from 'electron';
+import { app, BrowserWindow, protocol, session, ipcMain, net, Menu, MenuItem, clipboard, nativeTheme, nativeImage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { pathToFileURL } from 'url';
@@ -20,6 +20,30 @@ import { PasswordManager } from './password-manager';
 import { NewsProvider } from './news-provider';
 import { PwaManager } from './pwa-manager';
 import { sanitizeNavigationUrl, validateTabId } from '../security/ipc-validator';
+
+// Enforce standard Linux application identity so WM_CLASS binds to thaaw-browser.desktop
+if (process.platform === 'linux') {
+  app.name = 'thaaw-browser';
+  try {
+    (app as any).setDesktopName?.('thaaw-browser.desktop');
+  } catch {}
+}
+
+export const appIconPath = (() => {
+  const candidates = [
+    path.join(process.cwd(), 'assets', 'icons', 'thaaw-app-icon.png'),
+    path.join(__dirname, '..', '..', 'assets', 'icons', 'thaaw-app-icon.png'),
+    path.join(__dirname, '..', '..', '..', 'assets', 'icons', 'thaaw-app-icon.png'),
+    path.join(app.getAppPath(), 'assets', 'icons', 'thaaw-app-icon.png'),
+    '/home/mujtaba/.local/share/icons/hicolor/512x512/apps/thaaw-browser.png'
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return '';
+})();
+
+export const appIcon = appIconPath ? nativeImage.createFromPath(appIconPath) : nativeImage.createEmpty();
 
 // Startup timing benchmark
 const startupStartTime = Date.now();
@@ -68,9 +92,85 @@ protocol.registerSchemesAsPrivileged([
   }
 ]);
 
+export interface WindowContext {
+  id: number;
+  window: BrowserWindow;
+  tabManager: TabManager;
+  profileId: string;
+}
+
+const windowRegistry = new Map<number, WindowContext>();
+
 let mainWindow: BrowserWindow | null = null;
 let pickerWindow: BrowserWindow | null = null;
 let tabManager: TabManager | null = null;
+
+export function getMainWindow(): BrowserWindow | null {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && windowRegistry.has(focused.id)) return focused;
+  const first = windowRegistry.values().next().value;
+  return first ? first.window : null;
+}
+
+export function getWindowContextForSender(sender?: Electron.WebContents | null): WindowContext | null {
+  if (!sender) {
+    const focused = BrowserWindow.getFocusedWindow();
+    if (focused && windowRegistry.has(focused.id)) {
+      return windowRegistry.get(focused.id)!;
+    }
+    return windowRegistry.values().next().value || null;
+  }
+
+  // 1. Match by window chrome webContents
+  for (const ctx of windowRegistry.values()) {
+    if (!ctx.window.isDestroyed() && ctx.window.webContents.id === sender.id) {
+      return ctx;
+    }
+  }
+
+  // 2. Match by any tab WebContentsView in tabManager
+  for (const ctx of windowRegistry.values()) {
+    if (ctx.tabManager.hasWebContents(sender)) {
+      return ctx;
+    }
+  }
+
+  // 3. Fallback to focused or first registered window
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && windowRegistry.has(focused.id)) {
+    return windowRegistry.get(focused.id)!;
+  }
+  return windowRegistry.values().next().value || null;
+}
+
+export function broadcastToProfile(profileId: string, channel: string, ...args: any[]): void {
+  for (const ctx of windowRegistry.values()) {
+    if (ctx.profileId === profileId) {
+      try {
+        if (!ctx.window.isDestroyed()) {
+          ctx.window.webContents.send(channel, ...args);
+        }
+      } catch {}
+      try {
+        ctx.tabManager.broadcast(channel, ...args);
+      } catch {}
+    }
+  }
+}
+
+export function broadcastToAllWindows(channel: string, ...args: any[]): void {
+  for (const ctx of windowRegistry.values()) {
+    try {
+      if (!ctx.window.isDestroyed()) {
+        ctx.window.webContents.send(channel, ...args);
+      }
+    } catch {}
+    try {
+      ctx.tabManager.broadcast(channel, ...args);
+    } catch {}
+  }
+}
+
 const profileManager = new ProfileManager();
 const trackerBlocker = new TrackerBlocker('balanced');
 try {
@@ -84,10 +184,45 @@ const downloadManager = new DownloadManager();
 const authManager = new AuthManager();
 const pwaManager = new PwaManager();
 
-// Profile-scoped storage managers
-let activeHistoryManager = new HistoryManager(path.join(profileManager.getProfileDir(), 'history.json'));
-let activeBookmarkManager = new BookmarkManager(path.join(profileManager.getProfileDir(), 'bookmarks.json'));
-let activePasswordManager = new PasswordManager(path.join(profileManager.getProfileDir(), 'vault.json'));
+// Cache of profile-specific storage managers to ensure complete isolation
+const profileHistoryManagers = new Map<string, HistoryManager>();
+const profileBookmarkManagers = new Map<string, BookmarkManager>();
+const profilePasswordManagers = new Map<string, PasswordManager>();
+
+export function getHistoryManagerForProfile(profileId: string): HistoryManager {
+  let mgr = profileHistoryManagers.get(profileId);
+  if (!mgr) {
+    const profDir = profileManager.getProfileDir(profileId);
+    mgr = new HistoryManager(path.join(profDir, 'history.json'));
+    profileHistoryManagers.set(profileId, mgr);
+  }
+  return mgr;
+}
+
+export function getBookmarkManagerForProfile(profileId: string): BookmarkManager {
+  let mgr = profileBookmarkManagers.get(profileId);
+  if (!mgr) {
+    const profDir = profileManager.getProfileDir(profileId);
+    mgr = new BookmarkManager(path.join(profDir, 'bookmarks.json'));
+    profileBookmarkManagers.set(profileId, mgr);
+  }
+  return mgr;
+}
+
+export function getPasswordManagerForProfile(profileId: string): PasswordManager {
+  let mgr = profilePasswordManagers.get(profileId);
+  if (!mgr) {
+    const profDir = profileManager.getProfileDir(profileId);
+    mgr = new PasswordManager(path.join(profDir, 'vault.json'));
+    profilePasswordManagers.set(profileId, mgr);
+  }
+  return mgr;
+}
+
+// Active storage managers for default compatibility
+let activeHistoryManager = getHistoryManagerForProfile(profileManager.getActiveProfile().id);
+let activeBookmarkManager = getBookmarkManagerForProfile(profileManager.getActiveProfile().id);
+let activePasswordManager = getPasswordManagerForProfile(profileManager.getActiveProfile().id);
 const newsProvider = new NewsProvider();
 
 // High-speed in-memory cache for resolved protocol files to eliminate repeated disk I/O
@@ -444,7 +579,7 @@ export function configureSessionSecurity(targetSession: Electron.Session): void 
   });
 }
 
-function applyActiveProfile(profileId: string, resetTabs: boolean = false): boolean {
+function applyActiveProfile(profileId: string, resetTabs: boolean = false, targetWinCtx?: WindowContext): boolean {
   const success = profileManager.setActiveProfile(profileId);
   if (!success) return false;
 
@@ -457,14 +592,10 @@ function applyActiveProfile(profileId: string, resetTabs: boolean = false): bool
   configureSessionSecurity(targetSession);
 
   // Switch storage managers to the profile's directory
-  activeHistoryManager = new HistoryManager(path.join(profDir, 'history.json'));
-  activeBookmarkManager = new BookmarkManager(path.join(profDir, 'bookmarks.json'));
-  activePasswordManager = new PasswordManager(path.join(profDir, 'vault.json'));
+  activeHistoryManager = getHistoryManagerForProfile(active.id);
+  activeBookmarkManager = getBookmarkManagerForProfile(active.id);
+  activePasswordManager = getPasswordManagerForProfile(active.id);
   permissionManager.setStorageFile(path.join(profDir, 'permissions.json'));
-
-  if (tabManager) {
-    tabManager.setHistoryManager(activeHistoryManager);
-  }
 
   // Also sync authManager active user to this profile if an account matches
   authManager.setActiveAccountForProfile(active.id);
@@ -472,12 +603,6 @@ function applyActiveProfile(profileId: string, resetTabs: boolean = false): bool
 
   // Load and apply profile-specific settings
   const settings = profileManager.getProfileSettings(active.id);
-  if (tabManager) {
-    tabManager.setDefaultSearchEngine(settings.defaultSearchEngine || 'duckduckgo');
-    if (resetTabs) {
-      tabManager.closeAllTabsAndOpenNew('thaaw://newtab');
-    }
-  }
 
   if (settings.protectionLevel) {
     trackerBlocker.setProtectionLevel(settings.protectionLevel as ProtectionLevel);
@@ -486,125 +611,182 @@ function applyActiveProfile(profileId: string, resetTabs: boolean = false): bool
     trackerBlocker.adBlocker.setEnabled(settings.adBlockerEnabled);
   }
 
-  // Broadcast to mainWindow and tabs
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('browser:profile-changed', active);
-    mainWindow.webContents.send('browser:auth-changed', currentUser);
-    mainWindow.webContents.send('browser:theme-updated', { theme: settings.theme, preset: settings.themePreset });
-    mainWindow.webContents.send('browser:wallpaper-updated', settings.wallpaper || 'default');
-    mainWindow.webContents.send('browser:engine-updated', {
-      engine: settings.defaultSearchEngine,
-      label: settings.defaultSearchEngine === 'duckduckgo' ? 'DDG' :
-             settings.defaultSearchEngine === 'google' ? 'Google' :
-             settings.defaultSearchEngine === 'bing' ? 'Bing' : 'Brave'
-    });
+  const engineUpdate = {
+    engine: settings.defaultSearchEngine || 'duckduckgo',
+    label: settings.defaultSearchEngine === 'duckduckgo' ? 'DDG' :
+           settings.defaultSearchEngine === 'google' ? 'Google' :
+           settings.defaultSearchEngine === 'bing' ? 'Bing' : 'Brave'
+  };
+
+  // If a specific window switched profile, update only that window
+  if (targetWinCtx) {
+    targetWinCtx.profileId = active.id;
+    targetWinCtx.tabManager.setHistoryManager(activeHistoryManager);
+    targetWinCtx.tabManager.setDefaultSearchEngine(settings.defaultSearchEngine || 'duckduckgo');
+    if (resetTabs) {
+      targetWinCtx.tabManager.closeAllTabsAndOpenNew('thaaw://newtab');
+    }
+    if (!targetWinCtx.window.isDestroyed()) {
+      targetWinCtx.window.webContents.send('browser:profile-changed', active);
+      targetWinCtx.window.webContents.send('browser:auth-changed', currentUser);
+      targetWinCtx.window.webContents.send('browser:theme-updated', { theme: settings.theme, preset: settings.themePreset });
+      targetWinCtx.window.webContents.send('browser:wallpaper-updated', settings.wallpaper || 'default');
+      targetWinCtx.window.webContents.send('browser:engine-updated', engineUpdate);
+      if (settings.shortcuts) {
+        targetWinCtx.window.webContents.send('browser:shortcuts-updated', settings.shortcuts);
+      }
+    }
+    targetWinCtx.tabManager.broadcast('browser:profile-changed', active);
+    targetWinCtx.tabManager.broadcast('browser:auth-changed', currentUser);
+    targetWinCtx.tabManager.broadcast('browser:theme-updated', { theme: settings.theme, preset: settings.themePreset });
+    targetWinCtx.tabManager.broadcast('browser:wallpaper-updated', settings.wallpaper || 'default');
+    targetWinCtx.tabManager.broadcast('browser:engine-updated', engineUpdate);
+    if (settings.shortcuts) {
+      targetWinCtx.tabManager.broadcast('browser:shortcuts-updated', settings.shortcuts);
+    }
+  } else {
+    // Broadcast to all windows belonging to active.id
+    for (const ctx of windowRegistry.values()) {
+      if (ctx.profileId === active.id) {
+        ctx.tabManager.setHistoryManager(activeHistoryManager);
+        ctx.tabManager.setDefaultSearchEngine(settings.defaultSearchEngine || 'duckduckgo');
+        if (resetTabs) {
+          ctx.tabManager.closeAllTabsAndOpenNew('thaaw://newtab');
+        }
+        if (!ctx.window.isDestroyed()) {
+          ctx.window.webContents.send('browser:profile-changed', active);
+          ctx.window.webContents.send('browser:auth-changed', currentUser);
+          ctx.window.webContents.send('browser:theme-updated', { theme: settings.theme, preset: settings.themePreset });
+          ctx.window.webContents.send('browser:wallpaper-updated', settings.wallpaper || 'default');
+          ctx.window.webContents.send('browser:engine-updated', engineUpdate);
+          if (settings.shortcuts) {
+            ctx.window.webContents.send('browser:shortcuts-updated', settings.shortcuts);
+          }
+        }
+        ctx.tabManager.broadcast('browser:profile-changed', active);
+        ctx.tabManager.broadcast('browser:auth-changed', currentUser);
+        ctx.tabManager.broadcast('browser:theme-updated', { theme: settings.theme, preset: settings.themePreset });
+        ctx.tabManager.broadcast('browser:wallpaper-updated', settings.wallpaper || 'default');
+        ctx.tabManager.broadcast('browser:engine-updated', engineUpdate);
+        if (settings.shortcuts) {
+          ctx.tabManager.broadcast('browser:shortcuts-updated', settings.shortcuts);
+        }
+      }
+    }
   }
-  tabManager?.broadcast('browser:profile-changed', active);
-  tabManager?.broadcast('browser:auth-changed', currentUser);
-  tabManager?.broadcast('browser:theme-updated', { theme: settings.theme, preset: settings.themePreset });
-  tabManager?.broadcast('browser:wallpaper-updated', settings.wallpaper || 'default');
 
   return true;
 }
 
 function setupIpcHandlers(): void {
-  ipcMain.on('tab:create', (_event, url?: string) => {
-    if (tabManager) {
-      tabManager.createTab(url || 'thaaw://newtab');
+  ipcMain.on('tab:create', (event, url?: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    if (ctx) {
+      ctx.tabManager.createTab(url || 'thaaw://newtab');
     }
   });
 
-  ipcMain.on('tab:close', (_event, tabId: number) => {
+  ipcMain.on('tab:close', (event, tabId: number) => {
     const { isValid, sanitizedId } = validateTabId(tabId);
-    if (isValid && sanitizedId !== undefined && tabManager) {
-      tabManager.closeTab(sanitizedId);
+    const ctx = getWindowContextForSender(event.sender);
+    if (isValid && sanitizedId !== undefined && ctx) {
+      ctx.tabManager.closeTab(sanitizedId);
     }
   });
 
-  ipcMain.on('tab:switch', (_event, tabId: number) => {
+  ipcMain.on('tab:switch', (event, tabId: number) => {
     const { isValid, sanitizedId } = validateTabId(tabId);
-    if (isValid && sanitizedId !== undefined && tabManager) {
-      tabManager.switchTab(sanitizedId);
+    const ctx = getWindowContextForSender(event.sender);
+    if (isValid && sanitizedId !== undefined && ctx) {
+      ctx.tabManager.switchTab(sanitizedId);
     }
   });
 
-  ipcMain.on('tab:navigate', (_event, inputUrl: string) => {
-    if (tabManager) {
-      tabManager.navigateActiveTab(inputUrl);
+  ipcMain.on('tab:navigate', (event, inputUrl: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    if (ctx) {
+      ctx.tabManager.navigateActiveTab(inputUrl);
     }
   });
 
-  ipcMain.on('tab:reload', () => {
-    if (tabManager) tabManager.reloadActiveTab();
+  ipcMain.on('tab:reload', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    if (ctx) ctx.tabManager.reloadActiveTab();
   });
 
-  ipcMain.on('tab:stop', () => {
-    if (tabManager) tabManager.stopActiveTab();
+  ipcMain.on('tab:stop', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    if (ctx) ctx.tabManager.stopActiveTab();
   });
 
-  ipcMain.on('tab:back', () => {
-    if (tabManager) tabManager.goBackActiveTab();
+  ipcMain.on('tab:back', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    if (ctx) ctx.tabManager.goBackActiveTab();
   });
 
-  ipcMain.on('tab:forward', () => {
-    if (tabManager) tabManager.goForwardActiveTab();
+  ipcMain.on('tab:forward', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    if (ctx) ctx.tabManager.goForwardActiveTab();
   });
 
-  ipcMain.on('sidebar:resize', (_event, width: number) => {
-    if (tabManager) tabManager.setSidebarOffset(width);
+  ipcMain.on('sidebar:resize', (event, width: number) => {
+    const ctx = getWindowContextForSender(event.sender);
+    if (ctx) ctx.tabManager.setSidebarOffset(width);
   });
 
-  ipcMain.on('tab:sleep', (_event, tabId: number) => {
+  ipcMain.on('tab:sleep', (event, tabId: number) => {
     const { isValid, sanitizedId } = validateTabId(tabId);
-    if (isValid && sanitizedId !== undefined && tabManager) {
-      tabManager.sleepTab(sanitizedId);
+    const ctx = getWindowContextForSender(event.sender);
+    if (isValid && sanitizedId !== undefined && ctx) {
+      ctx.tabManager.sleepTab(sanitizedId);
     }
   });
 
-  ipcMain.on('tab:wake', (_event, tabId: number) => {
+  ipcMain.on('tab:wake', (event, tabId: number) => {
     const { isValid, sanitizedId } = validateTabId(tabId);
-    if (isValid && sanitizedId !== undefined && tabManager) {
-      tabManager.wakeTab(sanitizedId);
+    const ctx = getWindowContextForSender(event.sender);
+    if (isValid && sanitizedId !== undefined && ctx) {
+      ctx.tabManager.wakeTab(sanitizedId);
     }
   });
 
-  ipcMain.handle('browser:set-minimal-mode', (_event, enabled: boolean) => {
-    if (tabManager) {
-      tabManager.setMinimalMode(!!enabled);
-    }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('browser:minimal-mode-changed', !!enabled);
+  ipcMain.handle('browser:set-minimal-mode', (event, enabled: boolean) => {
+    const ctx = getWindowContextForSender(event.sender);
+    if (ctx) {
+      ctx.tabManager.setMinimalMode(!!enabled);
+      if (!ctx.window.isDestroyed()) {
+        ctx.window.webContents.send('browser:minimal-mode-changed', !!enabled);
+      }
     }
     return { success: true, minimalMode: !!enabled };
   });
 
-  ipcMain.on('chrome:set-height', (_event, height: number) => {
-    if (tabManager && typeof height === 'number' && height > 0) {
-      tabManager.setChromeHeight(height);
+  ipcMain.on('chrome:set-height', (event, height: number) => {
+    const ctx = getWindowContextForSender(event.sender);
+    if (ctx && typeof height === 'number' && height > 0) {
+      ctx.tabManager.setChromeHeight(height);
     }
   });
 
   // Global Theme Management (Profile-Scoped)
-  ipcMain.handle('theme:get', () => {
-    const s = profileManager.getProfileSettings();
+  ipcMain.handle('theme:get', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    const s = profileManager.getProfileSettings(profileId);
     return {
       theme: s.theme,
       preset: s.themePreset || (s.theme === 'light' ? 'white' : 'midnight')
     };
   });
 
-  ipcMain.handle('theme:set', (_event, { theme, preset }: { theme: string; preset?: string }) => {
+  ipcMain.handle('theme:set', (event, { theme, preset }: { theme: string; preset?: string }) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
     const themePreset = preset || (theme === 'light' ? 'white' : 'midnight');
 
-    // Automatically switch wallpaper to match the theme
-    const currentSettings = profileManager.getProfileSettings();
-    let newWallpaper = currentSettings.wallpaper;
-    const isCurrentLightWp = Boolean(newWallpaper && (newWallpaper.startsWith('light') || newWallpaper.includes('light/')));
-    if (!newWallpaper || newWallpaper === 'default' || (theme === 'light' && !isCurrentLightWp) || (theme === 'dark' && isCurrentLightWp)) {
-      newWallpaper = theme === 'light' ? 'light-13' : 'thaaw-midnight-mountains';
-    }
-
-    const updated = profileManager.updateProfileSettings({ theme, themePreset, wallpaper: newWallpaper });
+    // Theme switching must never replace, reset, or remove a user's custom wallpaper.
+    // Wallpaper preferences are strictly independent from theme choice.
+    const updated = profileManager.updateProfileSettings({ theme, themePreset }, profileId);
     const update = { theme: updated.theme, preset: updated.themePreset };
 
     // Synchronize Chromium native theme appearance so web content respects prefers-color-scheme
@@ -616,40 +798,42 @@ function setupIpcHandlers(): void {
       nativeTheme.themeSource = 'system';
     }
 
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('browser:theme-updated', update);
-      mainWindow.webContents.send('browser:wallpaper-updated', newWallpaper);
-    }
-    tabManager?.broadcast('browser:theme-updated', update);
-    tabManager?.broadcast('browser:wallpaper-updated', newWallpaper);
-    return { success: true, ...update, wallpaper: newWallpaper };
+    // Broadcast in real-time to all open windows and tabs for this profile
+    broadcastToProfile(profileId, 'browser:theme-updated', update);
+
+    return { success: true, ...update };
   });
 
   // Global Wallpaper Management (Profile-Scoped)
-  ipcMain.handle('wallpaper:get', () => {
-    const s = profileManager.getProfileSettings();
+  ipcMain.handle('wallpaper:get', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    const s = profileManager.getProfileSettings(profileId);
     return s.wallpaper || 'default';
   });
 
-  ipcMain.handle('wallpaper:save-from-url', (_event, imageUrl: string) => {
+  ipcMain.handle('wallpaper:save-from-url', (event, imageUrl: string) => {
     if (!imageUrl) return { success: false };
-    const updated = profileManager.updateProfileSettings({ wallpaper: imageUrl });
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    const updated = profileManager.updateProfileSettings({ wallpaper: imageUrl }, profileId);
     const wp = updated.wallpaper || imageUrl;
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('browser:wallpaper-updated', wp);
-    }
-    tabManager?.broadcast('browser:wallpaper-updated', wp);
+    broadcastToProfile(profileId, 'browser:wallpaper-updated', wp);
     return { success: true, wallpaper: wp };
   });
 
-  ipcMain.on('browser:request-view-image-fullscreen', (_event, imageUrl: string) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('browser:view-image-fullscreen', imageUrl);
+  ipcMain.on('browser:request-view-image-fullscreen', (event, imageUrl: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const targetWin = ctx ? ctx.window : getMainWindow();
+    if (targetWin && !targetWin.isDestroyed()) {
+      targetWin.webContents.send('browser:view-image-fullscreen', imageUrl);
     }
   });
 
-  ipcMain.handle('wallpaper:set', (_event, wallpaper: string, options?: any) => {
-    const updated = profileManager.updateProfileSettings({ wallpaper });
+  ipcMain.handle('wallpaper:set', (event, wallpaper: string, options?: any) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    const updated = profileManager.updateProfileSettings({ wallpaper }, profileId);
     const wp = updated.wallpaper || 'default';
 
     // Resolve local fileUrl and isVideo if custom wallpaper
@@ -669,10 +853,9 @@ function setupIpcHandlers(): void {
     }
     const finalOptions = { ...options, ...(fileUrl ? { fileUrl } : {}), ...(isVideo !== undefined ? { isVideo } : {}) };
 
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('browser:wallpaper-updated', wp, finalOptions);
-    }
-    tabManager?.broadcast('browser:wallpaper-updated', wp, finalOptions);
+    // Broadcast to all windows and tabs belonging to this profile
+    broadcastToProfile(profileId, 'browser:wallpaper-updated', wp, finalOptions);
+
     return { success: true, wallpaper: wp, fileUrl, isVideo };
   });
 
@@ -790,32 +973,63 @@ function setupIpcHandlers(): void {
   });
 
   // History IPC (Scoped to active profile)
-  ipcMain.handle('history:get', (_event, query?: string) => activeHistoryManager.getEntries(query));
-  ipcMain.handle('history:delete', (_event, id: string) => activeHistoryManager.deleteItem(id));
-  ipcMain.handle('history:clear', () => {
-    activeHistoryManager.clearAll();
+  ipcMain.handle('history:get', (event, query?: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getHistoryManagerForProfile(profileId).getEntries(query);
+  });
+  ipcMain.handle('history:delete', (event, id: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getHistoryManagerForProfile(profileId).deleteItem(id);
+  });
+  ipcMain.handle('history:clear', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    getHistoryManagerForProfile(profileId).clearAll();
     return { success: true };
   });
-  ipcMain.handle('history:clear-range', (_event, sinceTimestamp: number) => {
+  ipcMain.handle('history:clear-range', (event, sinceTimestamp: number) => {
     if (typeof sinceTimestamp !== 'number' || isNaN(sinceTimestamp)) {
       return { success: false, removedCount: 0 };
     }
-    const removedCount = activeHistoryManager.clearRange(sinceTimestamp);
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    const removedCount = getHistoryManagerForProfile(profileId).clearRange(sinceTimestamp);
     return { success: true, removedCount };
   });
-  ipcMain.handle('history:get-searches', (_event, limit?: number) => activeHistoryManager.getRecentSearches(limit));
-  ipcMain.handle('history:add-search', (_event, query: string) => activeHistoryManager.addSearchQuery(query));
-  ipcMain.handle('history:delete-search', (_event, query: string) => activeHistoryManager.deleteSearchQuery(query));
-  ipcMain.handle('history:clear-searches', () => {
-    activeHistoryManager.clearSearchHistory();
+  ipcMain.handle('history:get-searches', (event, limit?: number) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getHistoryManagerForProfile(profileId).getRecentSearches(limit);
+  });
+  ipcMain.handle('history:add-search', (event, query: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getHistoryManagerForProfile(profileId).addSearchQuery(query);
+  });
+  ipcMain.handle('history:delete-search', (event, query: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getHistoryManagerForProfile(profileId).deleteSearchQuery(query);
+  });
+  ipcMain.handle('history:clear-searches', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    getHistoryManagerForProfile(profileId).clearSearchHistory();
     return { success: true };
   });
 
   // Omnibox Autocomplete IPC
-  ipcMain.handle('omnibox:autocomplete', async (_event, query: string) => {
+  ipcMain.handle('omnibox:autocomplete', async (event, query: string) => {
     if (!query || typeof query !== 'string') return [];
     const q = query.trim().toLowerCase();
     if (!q) return [];
+
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    const historyMgr = getHistoryManagerForProfile(profileId);
+    const bookmarkMgr = getBookmarkManagerForProfile(profileId);
 
     const sanitize = (val: string) => (val || '').replace(/[<>]/g, '').trim();
 
@@ -827,9 +1041,9 @@ function setupIpcHandlers(): void {
       score: number;
     }> = [];
 
-    // 1. Search open tabs
-    if (tabManager) {
-      const openTabs = tabManager.searchTabs(q);
+    // 1. Search open tabs in caller window
+    if (ctx) {
+      const openTabs = ctx.tabManager.searchTabs(q);
       for (const tab of openTabs) {
         const title = sanitize(tab.title || tab.url);
         const url = sanitize(tab.url);
@@ -844,7 +1058,7 @@ function setupIpcHandlers(): void {
     }
 
     // 2. Search Bookmarks
-    const bookmarks = activeBookmarkManager.getBookmarks(q);
+    const bookmarks = bookmarkMgr.getBookmarks(q);
     for (const b of bookmarks) {
       if (!b.isFolder && b.url) {
         const url = sanitize(b.url);
@@ -863,7 +1077,7 @@ function setupIpcHandlers(): void {
     }
 
     // 3. Search History
-    const historyItems = activeHistoryManager.getEntries(q);
+    const historyItems = historyMgr.getEntries(q);
     for (const h of historyItems) {
       if (h.url) {
         const url = sanitize(h.url);
@@ -887,7 +1101,7 @@ function setupIpcHandlers(): void {
     }
 
     // 4. Search Queries
-    const searches = activeHistoryManager.getRecentSearches(10);
+    const searches = historyMgr.getRecentSearches(10);
     for (const s of searches) {
       if (typeof s === 'string' && s.toLowerCase().includes(q)) {
         const title = sanitize(s);
@@ -909,76 +1123,132 @@ function setupIpcHandlers(): void {
   });
 
   // Bookmarks IPC (Scoped to active profile)
-  ipcMain.handle('bookmarks:get', (_event, query?: string) => activeBookmarkManager.getBookmarks(query));
-  ipcMain.handle('bookmarks:add', (_event, { title, url, parentId, isFolder }) =>
-    activeBookmarkManager.addBookmark(title, url, parentId, isFolder)
-  );
-  ipcMain.handle('bookmarks:update', (_event, { id, patch }) => activeBookmarkManager.updateBookmark(id, patch));
-  ipcMain.handle('bookmarks:delete', (_event, id: string) => activeBookmarkManager.deleteBookmark(id));
-  ipcMain.handle('bookmarks:toggle', (_event, { title, url }) => activeBookmarkManager.toggleUrlBookmark(title, url));
-  ipcMain.handle('bookmarks:import', (_event, { content, format }: { content: string; format?: 'json' | 'html' }) => {
+  ipcMain.handle('bookmarks:get', (event, query?: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getBookmarkManagerForProfile(profileId).getBookmarks(query);
+  });
+  ipcMain.handle('bookmarks:add', (event, { title, url, parentId, isFolder }) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getBookmarkManagerForProfile(profileId).addBookmark(title, url, parentId, isFolder);
+  });
+  ipcMain.handle('bookmarks:update', (event, { id, patch }) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getBookmarkManagerForProfile(profileId).updateBookmark(id, patch);
+  });
+  ipcMain.handle('bookmarks:delete', (event, id: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getBookmarkManagerForProfile(profileId).deleteBookmark(id);
+  });
+  ipcMain.handle('bookmarks:toggle', (event, { title, url }) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getBookmarkManagerForProfile(profileId).toggleUrlBookmark(title, url);
+  });
+  ipcMain.handle('bookmarks:import', (event, { content, format }: { content: string; format?: 'json' | 'html' }) => {
     if (!content) return { imported: 0, errors: 1 };
-    return activeBookmarkManager.importBookmarks(content, format);
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getBookmarkManagerForProfile(profileId).importBookmarks(content, format);
   });
 
   // Bookmarks Bar Toggle IPC
-  ipcMain.handle('browser:toggle-bookmarks-bar', (_event, show: boolean) => {
+  ipcMain.handle('browser:toggle-bookmarks-bar', (event, show: boolean) => {
     const isShown = Boolean(show);
-    const activeProf = profileManager.getActiveProfile();
-    profileManager.updateProfileSettings({ showBookmarksBar: isShown }, activeProf.id);
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    profileManager.updateProfileSettings({ showBookmarksBar: isShown }, profileId);
     const height = isShown ? 118 : 84;
-    if (tabManager) {
-      tabManager.setChromeHeight(height);
-    }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('browser:bookmarks-bar-toggled', isShown);
+    for (const wCtx of windowRegistry.values()) {
+      if (wCtx.profileId === profileId) {
+        wCtx.tabManager.setChromeHeight(height);
+        if (!wCtx.window.isDestroyed()) {
+          wCtx.window.webContents.send('browser:bookmarks-bar-toggled', isShown);
+        }
+      }
     }
     return { success: true, showBookmarksBar: isShown, chromeHeight: height };
   });
 
-  // Passwords Vault IPC (Scoped to active profile)
-  ipcMain.handle('passwords:get', (_event, query?: string) => activePasswordManager.getCredentialList(query));
-  ipcMain.handle('passwords:save', (_event, { website, username, password }) =>
-    activePasswordManager.saveCredential(website, username, password)
-  );
-  ipcMain.handle('passwords:update', (_event, item: { id: string; website?: string; username?: string; password?: string }) => {
-    if (!item || !item.id) return { success: false, error: 'Missing credential ID' };
-    return activePasswordManager.updateCredential(item.id, item);
+  // Passwords Vault IPC (Scoped to caller's profile)
+  ipcMain.handle('passwords:get', (event, query?: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getPasswordManagerForProfile(profileId).getCredentialList(query);
   });
-  ipcMain.handle('passwords:reveal', (_event, id: string) => activePasswordManager.revealPassword(id));
-  ipcMain.handle('passwords:delete', (_event, id: string) => activePasswordManager.deleteCredential(id));
-  ipcMain.handle('passwords:get-security-status', () => activePasswordManager.getVaultSecurityStatus());
-  ipcMain.handle('passwords:import-csv', (_event, csvContent: string) => {
+  ipcMain.handle('passwords:save', (event, { website, username, password }) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getPasswordManagerForProfile(profileId).saveCredential(website, username, password);
+  });
+  ipcMain.handle('passwords:update', (event, item: { id: string; website?: string; username?: string; password?: string }) => {
+    if (!item || !item.id) return { success: false, error: 'Missing credential ID' };
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getPasswordManagerForProfile(profileId).updateCredential(item.id, item);
+  });
+  ipcMain.handle('passwords:reveal', (event, id: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getPasswordManagerForProfile(profileId).revealPassword(id);
+  });
+  ipcMain.handle('passwords:delete', (event, id: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getPasswordManagerForProfile(profileId).deleteCredential(id);
+  });
+  ipcMain.handle('passwords:get-security-status', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getPasswordManagerForProfile(profileId).getVaultSecurityStatus();
+  });
+  ipcMain.handle('passwords:import-csv', (event, csvContent: string) => {
     try {
-      const res = activePasswordManager.importCsv(csvContent);
+      const ctx = getWindowContextForSender(event.sender);
+      const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+      const res = getPasswordManagerForProfile(profileId).importCsv(csvContent);
       return { success: true, ...res };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Failed to import CSV', imported: 0, errors: 1, skipped: 0 };
     }
   });
-  ipcMain.handle('passwords:export-csv', () => {
+  ipcMain.handle('passwords:export-csv', (event) => {
     try {
-      const csv = activePasswordManager.exportCsv();
+      const ctx = getWindowContextForSender(event.sender);
+      const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+      const csv = getPasswordManagerForProfile(profileId).exportCsv();
       return { success: true, csv };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Failed to export CSV' };
     }
   });
-  ipcMain.handle('passwords:get-matching', (_event, originOrUrl: string) => activePasswordManager.getMatchingCredentials(originOrUrl));
-  ipcMain.handle('autofill:query-accounts', (_event, originOrUrl: string) => {
+  ipcMain.handle('passwords:get-matching', (event, originOrUrl: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return getPasswordManagerForProfile(profileId).getMatchingCredentials(originOrUrl);
+  });
+  ipcMain.handle('autofill:query-accounts', (event, originOrUrl: string) => {
     try {
-      const matching = activePasswordManager.getMatchingCredentials(originOrUrl);
+      const ctx = getWindowContextForSender(event.sender);
+      const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+      const matching = getPasswordManagerForProfile(profileId).getMatchingCredentials(originOrUrl);
       return matching.map(m => ({ website: m.website, username: m.username }));
     } catch {
       return [];
     }
   });
-  ipcMain.handle('autofill:request-fill', (_event, { origin, username }: { origin: string; username: string }) => {
+  ipcMain.handle('autofill:request-fill', (event, { origin, username }: { origin: string; username: string }) => {
     try {
-      const matching = activePasswordManager.getMatchingCredentials(origin);
+      const ctx = getWindowContextForSender(event.sender);
+      const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+      const pwdMgr = getPasswordManagerForProfile(profileId);
+      const matching = pwdMgr.getMatchingCredentials(origin);
       const cred = matching.find(m => m.username.toLowerCase() === (username || '').toLowerCase());
       if (!cred) return null;
-      const rev = activePasswordManager.revealPassword(cred.id);
+      const rev = pwdMgr.revealPassword(cred.id);
       if (rev.success && rev.password) {
         return { username: cred.username, password: rev.password };
       }
@@ -987,9 +1257,10 @@ function setupIpcHandlers(): void {
       return null;
     }
   });
-  ipcMain.handle('tab:autofill-active', (_event, cred: { username: string; password: string }) => {
+  ipcMain.handle('tab:autofill-active', (event, cred: { username: string; password: string }) => {
     try {
-      const activeWebContents = tabManager?.getActiveTabWebContents();
+      const ctx = getWindowContextForSender(event.sender);
+      const activeWebContents = (ctx ? ctx.tabManager : tabManager)?.getActiveTabWebContents();
       if (activeWebContents && !activeWebContents.isDestroyed()) {
         activeWebContents.send('autofill:do-fill', cred);
         return { success: true };
@@ -999,34 +1270,44 @@ function setupIpcHandlers(): void {
       return { success: false, error: err.message };
     }
   });
-  ipcMain.handle('passwords:save-or-update', (_event, item: { website: string; username: string; password: string; id?: string }) => {
+  ipcMain.handle('passwords:save-or-update', (event, item: { website: string; username: string; password: string; id?: string }) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    const pwdMgr = getPasswordManagerForProfile(profileId);
     if (item.id) {
-      return activePasswordManager.updateCredential(item.id, item);
+      return pwdMgr.updateCredential(item.id, item);
     }
-    const matching = activePasswordManager.getMatchingCredentials(item.website);
+    const matching = pwdMgr.getMatchingCredentials(item.website);
     const existing = matching.find(m => m.username.toLowerCase() === item.username.toLowerCase());
     if (existing) {
-      return activePasswordManager.updateCredential(existing.id, { password: item.password });
+      return pwdMgr.updateCredential(existing.id, { password: item.password });
     }
-    return activePasswordManager.saveCredential(item.website, item.username, item.password);
+    return pwdMgr.saveCredential(item.website, item.username, item.password);
   });
 
-  ipcMain.on('password:prompt-response', (_event, { decision, data }: { decision: 'save' | 'update' | 'dismiss'; data: any }) => {
+  ipcMain.on('password:prompt-response', (event, { decision, data }: { decision: 'save' | 'update' | 'dismiss'; data: any }) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    const pwdMgr = getPasswordManagerForProfile(profileId);
     if (decision === 'save' && data?.website && data?.username && data?.password) {
-      activePasswordManager.saveCredential(data.website, data.username, data.password);
+      pwdMgr.saveCredential(data.website, data.username, data.password);
     } else if (decision === 'update' && data?.id && data?.password) {
-      activePasswordManager.updateCredential(data.id, { password: data.password });
+      pwdMgr.updateCredential(data.id, { password: data.password });
     }
   });
 
-  ipcMain.on('autofill:form-submitted', (_event, { origin, username, password }: { origin: string; username: string; password: string }) => {
+  ipcMain.on('autofill:form-submitted', (event, { origin, username, password }: { origin: string; username: string; password: string }) => {
     if (!origin || !password) return;
-    const cleanOrigin = activePasswordManager.normalizeDomain(origin);
-    const matching = activePasswordManager.getMatchingCredentials(origin);
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    const pwdMgr = getPasswordManagerForProfile(profileId);
+    const targetWin = ctx ? ctx.window : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+    const cleanOrigin = pwdMgr.normalizeDomain(origin);
+    const matching = pwdMgr.getMatchingCredentials(origin);
     const existing = matching.find(m => m.username.toLowerCase() === (username || '').toLowerCase());
     if (!existing) {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('browser:password-prompt', {
+      if (targetWin && !targetWin.isDestroyed()) {
+        targetWin.webContents.send('browser:password-prompt', {
           mode: 'save',
           origin: cleanOrigin || origin,
           username,
@@ -1034,10 +1315,10 @@ function setupIpcHandlers(): void {
         });
       }
     } else {
-      const revealed = activePasswordManager.revealPassword(existing.id);
+      const revealed = pwdMgr.revealPassword(existing.id);
       if (revealed.success && revealed.password && revealed.password !== password) {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('browser:password-prompt', {
+        if (targetWin && !targetWin.isDestroyed()) {
+          targetWin.webContents.send('browser:password-prompt', {
             mode: 'update',
             origin: cleanOrigin || origin,
             username: existing.username,
@@ -1049,9 +1330,11 @@ function setupIpcHandlers(): void {
     }
   });
 
-  ipcMain.on('autofill:password-fields-detected', (_event, data: { hasPasswordFields: boolean; origin?: string }) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('browser:password-fields-detected', data);
+  ipcMain.on('autofill:password-fields-detected', (event, data: { hasPasswordFields: boolean; origin?: string }) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const targetWin = ctx ? ctx.window : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+    if (targetWin && !targetWin.isDestroyed()) {
+      targetWin.webContents.send('browser:password-fields-detected', data);
     }
   });
 
@@ -1116,8 +1399,8 @@ function setupIpcHandlers(): void {
   });
 
   // News Provider & Reader IPC
-  ipcMain.handle('news:get', async (_event, category?: string, page?: number, view?: string) =>
-    newsProvider.getNews(category, page, 16, view)
+  ipcMain.handle('news:get', async (_event, category?: string, page?: number, view?: string, forceRefresh?: boolean) =>
+    newsProvider.getNews(category, page, 16, view, forceRefresh)
   );
   ipcMain.handle('news:get-rss-feeds', () => newsProvider.getCustomRssFeeds());
   ipcMain.handle('news:add-rss-feed', async (_event, { url, name, category }) =>
@@ -1301,90 +1584,132 @@ function setupIpcHandlers(): void {
     return true;
   });
 
-  ipcMain.on('view:zoom-in', () => tabManager?.zoomInActiveTab());
-  ipcMain.on('view:zoom-out', () => tabManager?.zoomOutActiveTab());
-  ipcMain.on('view:zoom-reset', () => tabManager?.zoomResetActiveTab());
-  ipcMain.on('window:minimize', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
+  ipcMain.on('view:zoom-in', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    (ctx ? ctx.tabManager : tabManager)?.zoomInActiveTab();
   });
-  ipcMain.on('window:maximize', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMaximized()) {
-        mainWindow.unmaximize();
+  ipcMain.on('view:zoom-out', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    (ctx ? ctx.tabManager : tabManager)?.zoomOutActiveTab();
+  });
+  ipcMain.on('view:zoom-reset', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    (ctx ? ctx.tabManager : tabManager)?.zoomResetActiveTab();
+  });
+  ipcMain.on('window:minimize', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const win = ctx ? ctx.window : mainWindow;
+    if (win && !win.isDestroyed()) win.minimize();
+  });
+  ipcMain.on('window:maximize', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const win = ctx ? ctx.window : mainWindow;
+    const tm = ctx ? ctx.tabManager : tabManager;
+    if (win && !win.isDestroyed()) {
+      if (win.isMaximized()) {
+        win.unmaximize();
       } else {
-        mainWindow.maximize();
+        win.maximize();
       }
-      if (tabManager) {
-        setTimeout(() => tabManager?.updateActiveViewBounds(), 30);
-        setTimeout(() => tabManager?.updateActiveViewBounds(), 100);
-        setTimeout(() => tabManager?.updateActiveViewBounds(), 250);
+      if (tm) {
+        setTimeout(() => tm.updateActiveViewBounds(), 30);
+        setTimeout(() => tm.updateActiveViewBounds(), 100);
+        setTimeout(() => tm.updateActiveViewBounds(), 250);
       }
     }
   });
-  ipcMain.on('window:close', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+  ipcMain.on('window:close', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const win = ctx ? ctx.window : mainWindow;
+    if (win && !win.isDestroyed()) win.close();
   });
 
-  ipcMain.on('view:toggle-fullscreen', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setFullScreen(!mainWindow.isFullScreen());
+  ipcMain.on('view:toggle-fullscreen', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const win = ctx ? ctx.window : mainWindow;
+    if (win && !win.isDestroyed()) {
+      win.setFullScreen(!win.isFullScreen());
     }
   });
-  ipcMain.on('view:print', () => {
-    const wc = tabManager?.getActiveTabWebContents();
+  ipcMain.on('view:print', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const wc = (ctx ? ctx.tabManager : tabManager)?.getActiveTabWebContents();
     if (wc && !wc.isDestroyed()) wc.print();
   });
-  ipcMain.on('view:save', () => {
-    const wc = tabManager?.getActiveTabWebContents();
-    if (wc && !wc.isDestroyed()) (tabManager as any)?.savePageAs(wc);
+  ipcMain.on('view:save', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const tm = ctx ? ctx.tabManager : tabManager;
+    const wc = tm?.getActiveTabWebContents();
+    if (wc && !wc.isDestroyed()) (tm as any)?.savePageAs(wc);
   });
-  ipcMain.on('view:source', () => {
-    const wc = tabManager?.getActiveTabWebContents();
-    if (wc && !wc.isDestroyed()) (tabManager as any)?.viewPageSource(wc);
+  ipcMain.on('view:source', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const tm = ctx ? ctx.tabManager : tabManager;
+    const wc = tm?.getActiveTabWebContents();
+    if (wc && !wc.isDestroyed()) (tm as any)?.viewPageSource(wc);
   });
 
-  ipcMain.on('tab:mute', (_event, tabId: number) => {
+  ipcMain.on('tab:mute', (event, tabId: number) => {
     const { isValid, sanitizedId } = validateTabId(tabId);
-    if (isValid && sanitizedId !== undefined && tabManager) {
-      tabManager.toggleTabMute(sanitizedId);
+    const ctx = getWindowContextForSender(event.sender);
+    const tm = ctx ? ctx.tabManager : tabManager;
+    if (isValid && sanitizedId !== undefined && tm) {
+      tm.toggleTabMute(sanitizedId);
     }
   });
 
-  ipcMain.on('tab:pin', (_event, tabId: number) => {
+  ipcMain.on('tab:pin', (event, tabId: number) => {
     const { isValid, sanitizedId } = validateTabId(tabId);
-    if (isValid && sanitizedId !== undefined && tabManager) {
-      tabManager.pinTab(sanitizedId);
+    const ctx = getWindowContextForSender(event.sender);
+    const tm = ctx ? ctx.tabManager : tabManager;
+    if (isValid && sanitizedId !== undefined && tm) {
+      tm.pinTab(sanitizedId);
     }
   });
 
-  ipcMain.on('tab:duplicate', (_event, tabId: number) => {
+  ipcMain.on('tab:duplicate', (event, tabId: number) => {
     const { isValid, sanitizedId } = validateTabId(tabId);
-    if (isValid && sanitizedId !== undefined && tabManager) {
-      tabManager.duplicateTab(sanitizedId);
+    const ctx = getWindowContextForSender(event.sender);
+    const tm = ctx ? ctx.tabManager : tabManager;
+    if (isValid && sanitizedId !== undefined && tm) {
+      tm.duplicateTab(sanitizedId);
     }
   });
 
-  ipcMain.handle('tab:search', (_event, query: string) => {
-    if (!tabManager) return [];
-    return tabManager.searchTabs(query || '');
+  ipcMain.handle('tab:search', (event, query: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const tm = ctx ? ctx.tabManager : tabManager;
+    if (!tm) return [];
+    return tm.searchTabs(query || '');
   });
 
-  ipcMain.on('tab:reopen-closed', () => {
-    tabManager?.reopenClosedTab();
+  ipcMain.on('tab:reopen-closed', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const tm = ctx ? ctx.tabManager : tabManager;
+    tm?.reopenClosedTab();
   });
 
-  // Settings State Store (Profile-Scoped)
-  ipcMain.handle('settings:get', () => profileManager.getProfileSettings());
+  // Settings State Store (Authoritative Profile-Scoped)
+  ipcMain.handle('settings:get', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    return profileManager.getProfileSettings(profileId);
+  });
 
-  ipcMain.handle('settings:update', (_event, patch: Partial<ProfileSettings>) => {
-    const updated = profileManager.updateProfileSettings(patch);
+  ipcMain.handle('settings:update', (event, patch: Partial<ProfileSettings>) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    const updated = profileManager.updateProfileSettings(patch, profileId);
+
     if (typeof patch.showBookmarksBar === 'boolean') {
       const height = patch.showBookmarksBar ? 118 : 84;
-      if (tabManager) {
-        tabManager.setChromeHeight(height);
-      }
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('browser:bookmarks-bar-toggled', patch.showBookmarksBar);
+      for (const wCtx of windowRegistry.values()) {
+        if (wCtx.profileId === profileId) {
+          wCtx.tabManager.setChromeHeight(height);
+          if (!wCtx.window.isDestroyed()) {
+            wCtx.window.webContents.send('browser:bookmarks-bar-toggled', patch.showBookmarksBar);
+          }
+        }
       }
     }
     if (patch.protectionLevel) {
@@ -1393,10 +1718,14 @@ function setupIpcHandlers(): void {
     if (patch.adBlockerEnabled !== undefined) {
       trackerBlocker.adBlocker.setEnabled(patch.adBlockerEnabled);
     }
-    if ((patch.defaultSearchEngine || patch.customSearchUrl !== undefined) && tabManager) {
-      const engine = patch.defaultSearchEngine || profileManager.getProfileSettings().defaultSearchEngine || 'duckduckgo';
-      const customUrl = patch.customSearchUrl !== undefined ? patch.customSearchUrl : profileManager.getProfileSettings().customSearchUrl;
-      tabManager.setDefaultSearchEngine(engine, customUrl);
+    if (patch.defaultSearchEngine || patch.customSearchUrl !== undefined) {
+      const engine = patch.defaultSearchEngine || updated.defaultSearchEngine || 'duckduckgo';
+      const customUrl = patch.customSearchUrl !== undefined ? patch.customSearchUrl : updated.customSearchUrl;
+      for (const wCtx of windowRegistry.values()) {
+        if (wCtx.profileId === profileId) {
+          wCtx.tabManager.setDefaultSearchEngine(engine, customUrl);
+        }
+      }
       const engineUpdate = {
         engine,
         customUrl,
@@ -1405,38 +1734,78 @@ function setupIpcHandlers(): void {
                engine === 'bing' ? 'Bing' :
                engine === 'brave' ? 'Brave' : 'Custom'
       };
-      mainWindow?.webContents.send('browser:engine-updated', engineUpdate);
-      tabManager.broadcast('browser:engine-updated', engineUpdate);
+      broadcastToProfile(profileId, 'browser:engine-updated', engineUpdate);
     }
     if (patch.theme || patch.themePreset) {
       const update = {
         theme: updated.theme,
         preset: updated.themePreset || (updated.theme === 'light' ? 'white' : 'midnight')
       };
-      mainWindow?.webContents.send('browser:theme-updated', update);
-      tabManager?.broadcast('browser:theme-updated', update);
+      broadcastToProfile(profileId, 'browser:theme-updated', update);
+    }
+    if (patch.wallpaper !== undefined) {
+      broadcastToProfile(profileId, 'browser:wallpaper-updated', patch.wallpaper);
+    }
+    if (patch.shortcuts !== undefined) {
+      broadcastToProfile(profileId, 'browser:shortcuts-updated', patch.shortcuts);
     }
     return updated;
   });
 
   ipcMain.handle('profile:list', () => profileManager.listProfiles());
-  ipcMain.handle('profile:get-active', () => profileManager.getActiveProfile());
-  ipcMain.handle('profile:set-active', (_event, id: string) => {
-    return applyActiveProfile(id, true);
+  ipcMain.handle('profile:get-active', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    if (ctx) {
+      const p = profileManager.listProfiles().find(pr => pr.id === ctx.profileId);
+      if (p) return p;
+    }
+    return profileManager.getActiveProfile();
+  });
+  ipcMain.handle('profile:set-active', (event, id: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    return applyActiveProfile(id, true, ctx || undefined);
   });
   ipcMain.handle('profile:create', (_event, name: string) => profileManager.createProfile(name));
   ipcMain.handle('profile:update', (_event, id: string, patch: { name?: string; email?: string; color?: string; avatar?: string; avatarIcon?: string }) => {
     const updated = profileManager.updateProfile(id, patch || {});
-    if (updated?.id === profileManager.getActiveProfile().id) {
-      mainWindow?.webContents.send('browser:profile-changed', updated);
+    if (updated) {
+      broadcastToProfile(id, 'browser:profile-changed', updated);
     }
     return updated;
   });
   ipcMain.handle('profile:duplicate', (_event, id: string) => profileManager.duplicateProfile(id));
   ipcMain.handle('profile:update-settings', (_event, id: string, patch: Partial<ProfileSettings>) => {
     const updated = profileManager.updateProfileSettings(patch || {}, id);
-    if (id === profileManager.getActiveProfile().id && (patch.theme || patch.themePreset)) {
-      mainWindow?.webContents.send('browser:theme-updated', { theme: updated.theme, preset: updated.themePreset || 'midnight' });
+    if (patch.theme || patch.themePreset) {
+      const update = {
+        theme: updated.theme,
+        preset: updated.themePreset || (updated.theme === 'light' ? 'white' : 'midnight')
+      };
+      broadcastToProfile(id, 'browser:theme-updated', update);
+    }
+    if (patch.wallpaper !== undefined) {
+      broadcastToProfile(id, 'browser:wallpaper-updated', patch.wallpaper);
+    }
+    if (patch.shortcuts !== undefined) {
+      broadcastToProfile(id, 'browser:shortcuts-updated', patch.shortcuts);
+    }
+    if (patch.defaultSearchEngine || patch.customSearchUrl !== undefined) {
+      const engine = patch.defaultSearchEngine || updated.defaultSearchEngine || 'duckduckgo';
+      const customUrl = patch.customSearchUrl !== undefined ? patch.customSearchUrl : updated.customSearchUrl;
+      for (const wCtx of windowRegistry.values()) {
+        if (wCtx.profileId === id) {
+          wCtx.tabManager.setDefaultSearchEngine(engine, customUrl);
+        }
+      }
+      const engineUpdate = {
+        engine,
+        customUrl,
+        label: engine === 'duckduckgo' ? 'DDG' :
+               engine === 'google' ? 'Google' :
+               engine === 'bing' ? 'Bing' :
+               engine === 'brave' ? 'Brave' : 'Custom'
+      };
+      broadcastToProfile(id, 'browser:engine-updated', engineUpdate);
     }
     return updated;
   });
@@ -1462,10 +1831,11 @@ function setupIpcHandlers(): void {
       pickerWindow = null;
       pw.close();
     }
-    if (!mainWindow) {
-      createWindow();
+    if (windowRegistry.size === 0) {
+      createWindow(profileId);
     } else {
-      mainWindow.focus();
+      const win = getMainWindow();
+      if (win) win.focus();
     }
     return { success: true };
   });
@@ -1492,11 +1862,14 @@ function setupIpcHandlers(): void {
   ipcMain.handle('pwa:uninstall', (_event, id: string) => pwaManager.uninstallPwa(id));
   ipcMain.handle('pwa:check-installed', (_event, originOrUrl: string) => pwaManager.isPwaInstalled(originOrUrl));
 
-  ipcMain.on('profile:context-menu', (_event, id: string) => {
+  ipcMain.on('profile:context-menu', (event, id: string) => {
     const profile = profileManager.listProfiles().find(p => p.id === id);
-    if (!profile || !tabManager) return;
+    const ctx = getWindowContextForSender(event.sender);
+    const tm = ctx ? ctx.tabManager : tabManager;
+    const targetWin = ctx ? ctx.window : mainWindow;
+    if (!profile || !tm) return;
     const canDelete = profileManager.canDeleteProfile(id);
-    tabManager.showCustomContextMenu([
+    tm.showCustomContextMenu([
       { id: 'open', label: 'Open Profile', icon: 'user' },
       { id: 'edit', label: 'Edit Profile', icon: 'edit' },
       { id: 'duplicate', label: 'Duplicate Profile', icon: 'copy', disabled: profile.isPrivate },
@@ -1506,36 +1879,42 @@ function setupIpcHandlers(): void {
       { id: 'separator', type: 'separator', label: '' },
       { id: 'delete', label: 'Delete Profile', icon: 'trash', disabled: !canDelete }
     ], action => {
-      if (action === 'open') applyActiveProfile(id, true);
-      else mainWindow?.webContents.send('browser:profile-context-action', { action, profileId: id });
+      if (action === 'open') applyActiveProfile(id, true, ctx || undefined);
+      else targetWin?.webContents.send('browser:profile-context-action', { action, profileId: id });
     });
   });
 
   // Native Menus that render on top of WebContentsView
-  ipcMain.on('menu:show-main', () => {
-    if (!mainWindow) return;
+  ipcMain.on('menu:show-main', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const win = ctx ? ctx.window : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+    const tm = ctx ? ctx.tabManager : tabManager;
+    if (!win) return;
     const template: Electron.MenuItemConstructorOptions[] = [
-      { label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: () => tabManager?.createTab('thaaw://newtab') },
-      { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => createWindow() },
+      { label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: () => tm?.createTab('thaaw://newtab') },
+      { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => createWindow(ctx?.profileId) },
       { type: 'separator' },
-      { label: 'Bookmarks', accelerator: 'CmdOrCtrl+Shift+O', click: () => tabManager?.createTab('thaaw://bookmarks') },
-      { label: 'History', accelerator: 'CmdOrCtrl+H', click: () => tabManager?.createTab('thaaw://history') },
-      { label: 'Downloads', accelerator: 'CmdOrCtrl+J', click: () => tabManager?.createTab('thaaw://downloads') },
-      { label: 'Password Vault', click: () => tabManager?.createTab('thaaw://passwords') },
+      { label: 'Bookmarks', accelerator: 'CmdOrCtrl+Shift+O', click: () => tm?.createTab('thaaw://bookmarks') },
+      { label: 'History', accelerator: 'CmdOrCtrl+H', click: () => tm?.createTab('thaaw://history') },
+      { label: 'Downloads', accelerator: 'CmdOrCtrl+J', click: () => tm?.createTab('thaaw://downloads') },
+      { label: 'Password Vault', click: () => tm?.createTab('thaaw://passwords') },
       { type: 'separator' },
-      { label: 'Security Center', click: () => tabManager?.createTab('thaaw://security') },
-      { label: 'Privacy Center', click: () => tabManager?.createTab('thaaw://privacy') },
-      { label: 'Settings', click: () => tabManager?.createTab('thaaw://settings') },
+      { label: 'Security Center', click: () => tm?.createTab('thaaw://security') },
+      { label: 'Privacy Center', click: () => tm?.createTab('thaaw://privacy') },
+      { label: 'Settings', click: () => tm?.createTab('thaaw://settings') },
       { type: 'separator' },
-      { label: 'About THAAW', click: () => tabManager?.createTab('thaaw://about') }
+      { label: 'About THAAW', click: () => tm?.createTab('thaaw://about') }
     ];
     const menu = Menu.buildFromTemplate(template);
-    menu.popup({ window: mainWindow });
+    menu.popup({ window: win });
   });
 
-  ipcMain.on('menu:show-profile', () => {
-    if (!mainWindow) return;
-    const active = profileManager.getActiveProfile();
+  ipcMain.on('menu:show-profile', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const win = ctx ? ctx.window : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+    const tm = ctx ? ctx.tabManager : tabManager;
+    if (!win) return;
+    const active = ctx ? (profileManager.listProfiles().find(p => p.id === ctx.profileId) || profileManager.getActiveProfile()) : profileManager.getActiveProfile();
     const profiles = profileManager.listProfiles();
     const currentUser = authManager.getCurrentUser();
 
@@ -1557,7 +1936,11 @@ function setupIpcHandlers(): void {
         type: 'radio',
         checked: p.id === active.id,
         click: () => {
-          applyActiveProfile(p.id, true);
+          if (ctx) {
+            applyActiveProfile(p.id, true, ctx);
+          } else {
+            applyActiveProfile(p.id, true);
+          }
         }
       });
     });
@@ -1571,25 +1954,32 @@ function setupIpcHandlers(): void {
     });
     template.push({
       label: 'Manage Profiles & Settings...',
-      click: () => tabManager?.createTab('thaaw://settings')
+      click: () => tm?.createTab('thaaw://settings')
     });
 
     const menu = Menu.buildFromTemplate(template);
-    menu.popup({ window: mainWindow });
+    menu.popup({ window: win });
   });
 
-  ipcMain.on('menu:show-engine', () => {
-    if (!mainWindow) return;
-    const curSettings = profileManager.getProfileSettings();
+  ipcMain.on('menu:show-engine', (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const win = ctx ? ctx.window : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    if (!win) return;
+    const curSettings = profileManager.getProfileSettings(profileId);
     const engines: Electron.MenuItemConstructorOptions[] = [
       {
         label: 'DuckDuckGo',
         type: 'radio',
         checked: curSettings.defaultSearchEngine === 'duckduckgo',
         click: () => {
-          profileManager.updateProfileSettings({ defaultSearchEngine: 'duckduckgo' });
-          tabManager?.setDefaultSearchEngine('duckduckgo');
-          mainWindow?.webContents.send('browser:engine-updated', { engine: 'duckduckgo', label: 'DDG' });
+          profileManager.updateProfileSettings({ defaultSearchEngine: 'duckduckgo' }, profileId);
+          for (const wCtx of windowRegistry.values()) {
+            if (wCtx.profileId === profileId) {
+              wCtx.tabManager.setDefaultSearchEngine('duckduckgo');
+            }
+          }
+          broadcastToProfile(profileId, 'browser:engine-updated', { engine: 'duckduckgo', label: 'DDG' });
         }
       },
       {
@@ -1597,9 +1987,13 @@ function setupIpcHandlers(): void {
         type: 'radio',
         checked: curSettings.defaultSearchEngine === 'google',
         click: () => {
-          profileManager.updateProfileSettings({ defaultSearchEngine: 'google' });
-          tabManager?.setDefaultSearchEngine('google');
-          mainWindow?.webContents.send('browser:engine-updated', { engine: 'google', label: 'Google' });
+          profileManager.updateProfileSettings({ defaultSearchEngine: 'google' }, profileId);
+          for (const wCtx of windowRegistry.values()) {
+            if (wCtx.profileId === profileId) {
+              wCtx.tabManager.setDefaultSearchEngine('google');
+            }
+          }
+          broadcastToProfile(profileId, 'browser:engine-updated', { engine: 'google', label: 'Google' });
         }
       },
       {
@@ -1607,9 +2001,13 @@ function setupIpcHandlers(): void {
         type: 'radio',
         checked: curSettings.defaultSearchEngine === 'bing',
         click: () => {
-          profileManager.updateProfileSettings({ defaultSearchEngine: 'bing' });
-          tabManager?.setDefaultSearchEngine('bing');
-          mainWindow?.webContents.send('browser:engine-updated', { engine: 'bing', label: 'Bing' });
+          profileManager.updateProfileSettings({ defaultSearchEngine: 'bing' }, profileId);
+          for (const wCtx of windowRegistry.values()) {
+            if (wCtx.profileId === profileId) {
+              wCtx.tabManager.setDefaultSearchEngine('bing');
+            }
+          }
+          broadcastToProfile(profileId, 'browser:engine-updated', { engine: 'bing', label: 'Bing' });
         }
       },
       {
@@ -1617,90 +2015,107 @@ function setupIpcHandlers(): void {
         type: 'radio',
         checked: curSettings.defaultSearchEngine === 'brave',
         click: () => {
-          profileManager.updateProfileSettings({ defaultSearchEngine: 'brave' });
-          tabManager?.setDefaultSearchEngine('brave');
-          mainWindow?.webContents.send('browser:engine-updated', { engine: 'brave', label: 'Brave' });
+          profileManager.updateProfileSettings({ defaultSearchEngine: 'brave' }, profileId);
+          for (const wCtx of windowRegistry.values()) {
+            if (wCtx.profileId === profileId) {
+              wCtx.tabManager.setDefaultSearchEngine('brave');
+            }
+          }
+          broadcastToProfile(profileId, 'browser:engine-updated', { engine: 'brave', label: 'Brave' });
         }
       }
     ];
     const menu = Menu.buildFromTemplate(engines);
-    menu.popup({ window: mainWindow });
+    menu.popup({ window: win });
   });
 
-  ipcMain.on('tab:modal-state', (_event, isOpen: boolean) => {
-    tabManager?.setModalOpen(isOpen);
-    mainWindow?.webContents.send('browser:modal-state', { isOpen });
+  ipcMain.on('tab:modal-state', (event, isOpen: boolean) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const tm = ctx ? ctx.tabManager : tabManager;
+    const win = ctx ? ctx.window : mainWindow;
+    tm?.setModalOpen(isOpen);
+    win?.webContents.send('browser:modal-state', { isOpen });
   });
 
-  ipcMain.handle('data:clear', async () => {
-    const partition = profileManager.getPartitionName(profileManager.getActiveProfile().id);
+  ipcMain.handle('data:clear', async (event) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    const partition = profileManager.getPartitionName(profileId);
     await session.fromPartition(partition).clearStorageData();
     return { success: true };
   });
 
-  ipcMain.on('palette:action', (_event, commandId: string) => {
-    if (!tabManager) return;
+  ipcMain.on('palette:action', (event, commandId: string) => {
+    const ctx = getWindowContextForSender(event.sender);
+    const tm = ctx ? ctx.tabManager : tabManager;
+    const win = ctx ? ctx.window : mainWindow;
+    const profileId = ctx ? ctx.profileId : profileManager.getActiveProfile().id;
+    if (!tm) return;
     switch (commandId) {
       case 'new-window':
-        createWindow();
+        createWindow(profileId);
         break;
       case 'new-incognito':
-        // Private profiles use an in-memory partition and leave no browser storage behind.
-        applyActiveProfile('private', true);
-        createWindow();
+        createWindow('private');
         break;
       case 'exit-app':
         app.quit();
         break;
       case 'new-tab':
-        tabManager.createTab('thaaw://newtab');
+        tm.createTab('thaaw://newtab');
         break;
       case 'reopen-closed-tab':
-        tabManager.reopenClosedTab();
+        tm.reopenClosedTab();
         break;
       case 'open-security':
-        tabManager.createTab('thaaw://security');
+        tm.createTab('thaaw://security');
         break;
       case 'open-privacy':
-        tabManager.createTab('thaaw://privacy');
+        tm.createTab('thaaw://privacy');
         break;
       case 'open-settings':
-        tabManager.createTab('thaaw://settings');
+        tm.createTab('thaaw://settings');
         break;
       case 'open-about':
-        tabManager.createTab('thaaw://about');
+        tm.createTab('thaaw://about');
         break;
       case 'open-downloads':
-        tabManager.createTab('thaaw://downloads');
+        tm.createTab('thaaw://downloads');
         break;
       case 'open-history':
-        tabManager.createTab('thaaw://history');
+        tm.createTab('thaaw://history');
         break;
       case 'open-bookmarks':
-        tabManager.createTab('thaaw://bookmarks');
+        tm.createTab('thaaw://bookmarks');
         break;
       case 'open-passwords':
-        tabManager.createTab('thaaw://passwords');
+        tm.createTab('thaaw://passwords');
         break;
       case 'toggle-theme': {
-        const curSettings = profileManager.getProfileSettings();
+        const curSettings = profileManager.getProfileSettings(profileId);
         const nextTheme = curSettings.theme === 'dark' ? 'light' : 'dark';
         const nextPreset = nextTheme === 'light' ? 'white' : 'midnight';
-        profileManager.updateProfileSettings({ theme: nextTheme, themePreset: nextPreset });
-        mainWindow?.webContents.send('browser:theme-updated', { theme: nextTheme, preset: nextPreset });
-        tabManager?.broadcast('browser:theme-updated', { theme: nextTheme, preset: nextPreset });
+        profileManager.updateProfileSettings({ theme: nextTheme, themePreset: nextPreset }, profileId);
+        if (nextTheme === 'light') {
+          nativeTheme.themeSource = 'light';
+        } else if (nextTheme === 'dark') {
+          nativeTheme.themeSource = 'dark';
+        } else {
+          nativeTheme.themeSource = 'system';
+        }
+        broadcastToProfile(profileId, 'browser:theme-updated', { theme: nextTheme, preset: nextPreset });
         break;
       }
       case 'toggle-sidebar': {
-        mainWindow?.webContents.send('browser:toggle-sidebar');
+        win?.webContents.send('browser:toggle-sidebar');
         break;
       }
       case 'toggle-shield': {
-        const active = tabManager.getActiveTabInfo();
+        const active = tm.getActiveTabInfo();
         if (active) {
           trackerBlocker.toggleShield(active.url);
           const stats = trackerBlocker.getStatsForDomain(active.url);
-          mainWindow?.webContents.send('browser:security-status-updated', stats);
+          win?.webContents.send('browser:security-status-updated', stats);
         }
         break;
       }
@@ -1724,7 +2139,7 @@ function createProfilePickerWindow(): void {
     minHeight: 500,
     backgroundColor: '#0A0D14',
     title: "Who's using THAAW?",
-    icon: path.join(__dirname, '..', '..', 'assets', 'icons', 'thaaw-app-icon.png'),
+    icon: appIcon,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       sandbox: false,
@@ -1733,6 +2148,10 @@ function createProfilePickerWindow(): void {
       webSecurity: true
     }
   });
+
+  if (process.platform === 'linux' && !appIcon.isEmpty()) {
+    pickerWindow.setIcon(appIcon);
+  }
 
   const candidate1 = path.join(__dirname, '..', 'profiles', 'profile-picker.html');
   const candidate2 = path.join(app.getAppPath(), 'browser', 'profiles', 'profile-picker.html');
@@ -1748,11 +2167,15 @@ function createProfilePickerWindow(): void {
   });
 }
 
-function createWindow(): void {
+function createWindow(targetProfileId?: string): BrowserWindow {
   // Completely suppress standard desktop application menu (File / Edit / View / Window / Help)
   Menu.setApplicationMenu(null);
 
-  mainWindow = new BrowserWindow({
+  const initialProfile = targetProfileId
+    ? (profileManager.listProfiles().find(p => p.id === targetProfileId) || profileManager.getActiveProfile())
+    : profileManager.getActiveProfile();
+
+  const newWin = new BrowserWindow({
     width: 1280,
     height: 850,
     minWidth: 800,
@@ -1761,7 +2184,7 @@ function createWindow(): void {
     title: 'THAAW',
     frame: false, // Frameless: THAAW tab bar serves as top window interface without OS title bar
     autoHideMenuBar: true,
-    icon: path.join(__dirname, '..', '..', 'assets', 'icons', 'thaaw-app-icon.png'),
+    icon: appIcon,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       sandbox: false, // Chrome UI window runs with preload bridge
@@ -1771,47 +2194,63 @@ function createWindow(): void {
     }
   });
 
-  mainWindow.setMenuBarVisibility(false);
+  if (process.platform === 'linux' && !appIcon.isEmpty()) {
+    newWin.setIcon(appIcon);
+  }
 
-  // Load browser shell UI
-  const uiPath = path.join(__dirname, '..', 'ui', 'index.html');
-  mainWindow.loadFile(uiPath);
+  newWin.setMenuBarVisibility(false);
 
-  const activeProfile = profileManager.getActiveProfile();
-  const activeSettings = profileManager.getProfileSettings(activeProfile.id);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    mainWindow = newWin;
+  }
 
-  // Synchronize initial Chromium native theme appearance with active profile
-  const initialTheme = activeSettings.theme || 'dark';
+  const initialSettings = profileManager.getProfileSettings(initialProfile.id);
+  const initialTheme = initialSettings.theme || 'dark';
   nativeTheme.themeSource = initialTheme === 'light' ? 'light' : initialTheme === 'dark' ? 'dark' : 'system';
 
-  // Initialize Tab Manager with profile-aware managers
-  tabManager = new TabManager(
-    mainWindow,
+  const newTabMgr = new TabManager(
+    newWin,
     trackerBlocker,
     downloadManager,
     permissionManager,
     (tabs, activeTabId) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('browser:tabs-updated', { tabs, activeTabId });
+      if (!newWin.isDestroyed()) {
+        newWin.webContents.send('browser:tabs-updated', { tabs, activeTabId });
       }
     },
     (activeUrl) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
+      if (!newWin.isDestroyed()) {
         const stats = trackerBlocker.getStatsForDomain(activeUrl);
-        mainWindow.webContents.send('browser:security-status-updated', stats);
+        newWin.webContents.send('browser:security-status-updated', stats);
       }
     },
-    activeHistoryManager,
+    getHistoryManagerForProfile(initialProfile.id),
     profileManager,
     configureSessionSecurity
   );
-  tabManager.setDefaultSearchEngine(activeSettings.defaultSearchEngine || 'duckduckgo');
-  if (activeSettings.showBookmarksBar) {
-    tabManager.setChromeHeight(118);
+  newTabMgr.setDefaultSearchEngine(initialSettings.defaultSearchEngine || 'duckduckgo');
+  if (initialSettings.showBookmarksBar) {
+    newTabMgr.setChromeHeight(118);
   }
 
-  mainWindow.webContents.on('context-menu', (_e, params) => {
-    if (!mainWindow || mainWindow.isDestroyed() || !tabManager) return;
+  const winCtx: WindowContext = {
+    id: newWin.id,
+    window: newWin,
+    tabManager: newTabMgr,
+    profileId: initialProfile.id
+  };
+  windowRegistry.set(newWin.id, winCtx);
+
+  if (mainWindow === newWin) {
+    tabManager = newTabMgr;
+  }
+
+  // Load browser shell UI
+  const uiPath = path.join(__dirname, '..', 'ui', 'index.html');
+  newWin.loadFile(uiPath);
+
+  newWin.webContents.on('context-menu', (_e, params) => {
+    if (newWin.isDestroyed() || !newTabMgr) return;
     const items: any[] = [];
     if (params.isEditable) {
       items.push(
@@ -1844,42 +2283,59 @@ function createWindow(): void {
       );
     }
 
-    tabManager.showCustomContextMenu(items, (actionId: string) => {
+    newTabMgr.showCustomContextMenu(items, (actionId: string) => {
       switch (actionId) {
-        case 'undo': mainWindow?.webContents.undo(); break;
-        case 'redo': mainWindow?.webContents.redo(); break;
-        case 'cut': mainWindow?.webContents.cut(); break;
-        case 'copy': mainWindow?.webContents.copy(); break;
-        case 'paste': mainWindow?.webContents.paste(); break;
+        case 'undo': newWin.webContents.undo(); break;
+        case 'redo': newWin.webContents.redo(); break;
+        case 'cut': newWin.webContents.cut(); break;
+        case 'copy': newWin.webContents.copy(); break;
+        case 'paste': newWin.webContents.paste(); break;
         case 'paste-and-go': {
           const text = clipboard.readText().trim();
-          if (text && tabManager) tabManager.navigateActiveTab(text);
+          if (text) newTabMgr.navigateActiveTab(text);
           break;
         }
-        case 'select-all': mainWindow?.webContents.selectAll(); break;
+        case 'select-all': newWin.webContents.selectAll(); break;
         case 'search-selection': {
           const query = params.selectionText.trim();
-          if (query && tabManager) tabManager.createTab(query);
+          if (query) newTabMgr.createTab(query);
           break;
         }
-        case 'new-tab': tabManager?.createTab('thaaw://newtab'); break;
-        case 'reload': tabManager?.getActiveTabWebContents()?.reload(); break;
-        case 'inspect': mainWindow?.webContents.inspectElement(params.x, params.y); break;
+        case 'new-tab': newTabMgr.createTab('thaaw://newtab'); break;
+        case 'reload': newTabMgr.getActiveTabWebContents()?.reload(); break;
+        case 'inspect': newWin.webContents.inspectElement(params.x, params.y); break;
       }
     });
   });
 
-  mainWindow.webContents.once('did-finish-load', () => {
+  newWin.webContents.once('did-finish-load', () => {
+    newWin.webContents.send('browser:profile-changed', initialProfile);
+    newWin.webContents.send('browser:theme-updated', {
+      theme: initialSettings.theme || 'dark',
+      preset: initialSettings.themePreset || 'midnight'
+    });
+    if (initialSettings.wallpaper) {
+      newWin.webContents.send('browser:wallpaper-updated', initialSettings.wallpaper);
+    }
+    if (initialSettings.shortcuts) {
+      newWin.webContents.send('browser:shortcuts-updated', initialSettings.shortcuts);
+    }
     const elapsed = Date.now() - startupStartTime;
-    console.log(`[THAAW Benchmark] Cold startup ready in ${elapsed}ms`);
-    // Open initial tab
-    tabManager?.createTab('thaaw://newtab');
+    console.log(`[THAAW Benchmark] Window ${newWin.id} (profile: ${initialProfile.id}) ready in ${elapsed}ms`);
+    newTabMgr.createTab('thaaw://newtab');
   });
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-    tabManager = null;
+  newWin.on('closed', () => {
+    newTabMgr.destroy();
+    windowRegistry.delete(newWin.id);
+    if (mainWindow === newWin) {
+      const remaining = getMainWindow();
+      mainWindow = remaining;
+      tabManager = remaining ? windowRegistry.get(remaining.id)?.tabManager || null : null;
+    }
   });
+
+  return newWin;
 }
 
 app.whenReady().then(() => {

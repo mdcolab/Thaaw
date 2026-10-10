@@ -210,6 +210,41 @@ export class TabManager {
     } catch {}
   }
 
+  public hasWebContents(wc: Electron.WebContents): boolean {
+    if (!wc) return false;
+    try {
+      const win = this.window as any;
+      if (win && !win.isDestroyed() && win.webContents && win.webContents.id === wc.id) {
+        return true;
+      }
+      for (const tab of this.tabs.values()) {
+        if (!tab.view.webContents.isDestroyed() && tab.view.webContents.id === wc.id) {
+          return true;
+        }
+      }
+    } catch {}
+    return false;
+  }
+
+  public getWindow(): BaseWindow {
+    return this.window;
+  }
+
+  public destroy(): void {
+    if (this.memorySaverTimer) {
+      clearInterval(this.memorySaverTimer);
+      this.memorySaverTimer = null;
+    }
+    this.tabs.forEach(tab => {
+      try {
+        if (!tab.view.webContents.isDestroyed()) {
+          (tab.view.webContents as any).destroy();
+        }
+      } catch {}
+    });
+    this.tabs.clear();
+  }
+
   private isModalStateOpen = false;
 
   public async setModalOpen(isOpen: boolean): Promise<void> {

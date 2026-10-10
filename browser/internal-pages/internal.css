@@ -2190,6 +2190,125 @@ summary {
   color: var(--thaaw-text-muted);
 }
 
+/* News Card Meta Details */
+.news-card-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  margin-left: auto;
+}
+
+.news-card-time {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+}
+
+[data-theme="light"] .news-card-time {
+  color: rgba(15, 23, 42, 0.5);
+}
+
+.news-card-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.65);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+}
+
+[data-theme="light"] .news-card-desc {
+  color: rgba(15, 23, 42, 0.65);
+}
+
+.news-status-banner {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 8px;
+  color: #f59e0b;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.news-refresh-btn.spinning [data-icon="refresh-cw"] {
+  display: inline-block;
+  animation: spinNews 0.8s linear infinite;
+}
+
+@keyframes spinNews {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Skeleton Loading Cards */
+.news-card-skeleton {
+  display: flex;
+  flex-direction: column;
+  background: rgba(38, 36, 48, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 14px;
+  overflow: hidden;
+  height: 240px;
+  position: relative;
+}
+
+.skeleton-shimmer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.04) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  pointer-events: none;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-img {
+  width: 100%;
+  height: 130px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.skeleton-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.skeleton-line {
+  height: 10px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.skeleton-line.w-80 { width: 80%; }
+.skeleton-line.w-60 { width: 60%; }
+.skeleton-line.w-40 { width: 40%; }
+
 /* Floating Cloud Capsule: Live Weather, Location, Clock & Shield Status */
 .floating-cloud-widget {
   position: fixed !important;

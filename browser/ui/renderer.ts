@@ -91,7 +91,7 @@ interface ThaawAPIBridge {
   savePassword(item: { website: string; username: string; password: string }): Promise<any>;
   revealPassword(id: string): Promise<string>;
   deletePassword(id: string): Promise<boolean>;
-  getNews(category?: string): Promise<any>;
+  getNews(category?: string, page?: number, view?: string, forceRefresh?: boolean): Promise<any>;
   getSettings(): Promise<unknown>;
   updateSettings(settings: unknown): Promise<unknown>;
   clearBrowsingData(): Promise<{ success: boolean }>;
@@ -842,6 +842,7 @@ function isVideoWallpaper(wpId?: string, isVideoHint?: boolean): boolean {
 
 let currentActiveChromeWallpaper = '';
 let currentChromeWallpaperAnim: Animation | null = null;
+let currentPendingChromeWallpaperCleanup: (() => void) | null = null;
 
 function resolveWallpaperTargetUrl(wpId: string, options?: { fileUrl?: string }): string {
   if (!wpId || wpId === 'none') return '';
@@ -905,20 +906,20 @@ function syncChromeWallpaper(wallpaperId?: string, options?: { transition?: stri
 
     if (wpId === 'none') {
       layer.style.backgroundImage = 'none';
-      layer.style.backgroundColor = currentThemeMode === 'light' ? '#F8FAFC' : '#050812';
+      layer.style.backgroundColor = 'var(--thaaw-bg)';
     } else if (!wpId || wpId === 'default') {
       layer.classList.add('default-bg');
+      layer.style.backgroundColor = 'var(--thaaw-bg)';
       if (currentThemeMode === 'light') {
         layer.style.backgroundImage = 'url("../../assets/wallpapers/light/light-13.webp")';
-        layer.style.backgroundColor = '#FAF9F6';
       } else {
         layer.style.backgroundImage = 'url("../../assets/wallpapers/thaaw-midnight-mountains.webp")';
-        layer.style.backgroundColor = '#050812';
       }
     } else {
+      layer.className = 'chrome-wallpaper-layer';
       const url = resolveWallpaperTargetUrl(wpId, options);
       layer.style.backgroundImage = `url("${url}")`;
-      layer.style.backgroundColor = currentThemeMode === 'light' ? '#F8FAFC' : '#050812';
+      layer.style.backgroundColor = 'var(--thaaw-bg)';
     }
   };
 
@@ -939,8 +940,12 @@ function syncChromeWallpaper(wallpaperId?: string, options?: { transition?: stri
     }
 
     if (currentChromeWallpaperAnim) {
-      try { currentChromeWallpaperAnim.cancel(); } catch (_) {}
+      try {
+        if (currentPendingChromeWallpaperCleanup) currentPendingChromeWallpaperCleanup();
+        currentChromeWallpaperAnim.cancel();
+      } catch (_) {}
       currentChromeWallpaperAnim = null;
+      currentPendingChromeWallpaperCleanup = null;
     }
 
     const nextIsVideo = (options && options.isVideo !== undefined) ? !!options.isVideo : isVideoWallpaper(nextWp);
@@ -965,15 +970,17 @@ function syncChromeWallpaper(wallpaperId?: string, options?: { transition?: stri
     } else if (!nextIsVideo && layerIncoming) {
       if (nextWp === 'none') {
         layerIncoming.style.backgroundImage = 'none';
-        layerIncoming.style.backgroundColor = currentThemeMode === 'light' ? '#F8FAFC' : '#050812';
+        layerIncoming.style.backgroundColor = 'var(--thaaw-bg)';
       } else if (!nextWp || nextWp === 'default') {
         layerIncoming.className = 'chrome-wallpaper-layer incoming default-bg';
+        layerIncoming.style.backgroundColor = 'var(--thaaw-bg)';
         const defImg = currentThemeMode === 'light' ? 'light/light-13.webp' : 'thaaw-midnight-mountains.webp';
         layerIncoming.style.backgroundImage = `url("../../assets/wallpapers/${defImg}")`;
       } else {
         layerIncoming.className = 'chrome-wallpaper-layer incoming';
         const url = resolveWallpaperTargetUrl(nextWp, options);
         layerIncoming.style.backgroundImage = `url("${url}")`;
+        layerIncoming.style.backgroundColor = 'var(--thaaw-bg)';
       }
       layerIncoming.style.display = 'block';
       layerIncoming.style.opacity = '0';
@@ -1041,8 +1048,10 @@ function syncChromeWallpaper(wallpaperId?: string, options?: { transition?: stri
         }
         try { animIn.cancel(); animOut.cancel(); } catch (_) {}
         currentChromeWallpaperAnim = null;
+        currentPendingChromeWallpaperCleanup = null;
       };
 
+      currentPendingChromeWallpaperCleanup = cleanup;
       animIn.onfinish = cleanup;
       currentChromeWallpaperAnim = animIn;
     } catch {
@@ -1053,6 +1062,16 @@ function syncChromeWallpaper(wallpaperId?: string, options?: { transition?: stri
   const handleWp = (wpId: string) => {
     if (options && options.transition && options.transition !== 'none') {
       applyWithTransition(wpId, options.transition, options.duration || 700, !!options.force || currentActiveChromeWallpaper === wpId);
+    } else if (options && options.transition === 'none') {
+      if (currentChromeWallpaperAnim) {
+        try {
+          if (currentPendingChromeWallpaperCleanup) currentPendingChromeWallpaperCleanup();
+          currentChromeWallpaperAnim.cancel();
+        } catch (_) {}
+        currentChromeWallpaperAnim = null;
+        currentPendingChromeWallpaperCleanup = null;
+      }
+      applyDirectly(wpId);
     } else {
       let effect = 'none';
       let duration = 700;
@@ -1091,7 +1110,10 @@ function applyThemeToDOM(theme: string, preset?: string): void {
   if (preset) {
     document.documentElement.setAttribute('data-theme-preset', preset);
   }
-  syncChromeWallpaper();
+  if (currentChromeWallpaperAnim && currentPendingChromeWallpaperCleanup) {
+    try { currentPendingChromeWallpaperCleanup(); } catch (_) {}
+  }
+  syncChromeWallpaper(currentActiveChromeWallpaper || undefined, { transition: 'none', force: true });
 }
 
 // Fetch and cache custom wallpapers list on startup
@@ -1104,12 +1126,22 @@ if (window.thaawAPI?.getCustomWallpapers) {
   }).catch(() => {});
 }
 
-// Initialize Theme & Wallpaper
-window.thaawAPI.getTheme().then(res => {
-  if (res) applyThemeToDOM(res.theme, res.preset);
-  else syncChromeWallpaper();
+// Initialize Theme & Wallpaper concurrently from authoritative profile storage
+Promise.all([
+  window.thaawAPI.getTheme().catch(() => null),
+  window.thaawAPI.getWallpaper?.().catch(() => null)
+]).then(([themeRes, wpRes]) => {
+  if (themeRes) {
+    currentThemeMode = themeRes.theme;
+    if (themeRes.preset) currentThemePreset = themeRes.preset;
+    document.documentElement.setAttribute('data-theme', themeRes.theme);
+    if (themeRes.preset) {
+      document.documentElement.setAttribute('data-theme-preset', themeRes.preset);
+    }
+  }
+  syncChromeWallpaper(wpRes || 'default', { force: true });
 }).catch(() => {
-  syncChromeWallpaper();
+  syncChromeWallpaper('default', { force: true });
 });
 
 window.thaawAPI.onThemeUpdated((data) => {

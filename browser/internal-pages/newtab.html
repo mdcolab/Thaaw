@@ -1048,36 +1048,43 @@
       isInitialLoad: true,
       currentAnimation: null,
 
-      init() {
+      async init() {
         // Sync with browser theme
         if (window.thaawAPI) {
           document.documentElement.classList.add('inside-thaaw-chrome', 'newtab-page');
           document.body.classList.add('inside-thaaw-chrome');
-          window.thaawAPI.getTheme().then(res => {
-            if (res) {
-              this.apply(res.theme, res.preset);
-            }
-          }).catch(() => {});
-          window.thaawAPI.onThemeUpdated((data) => {
+
+          window.thaawAPI.onThemeUpdated?.((data) => {
             if (data && (data.theme !== this.theme || data.preset !== this.preset)) {
               this.apply(data.theme, data.preset);
             }
           });
-          window.thaawAPI.getWallpaper?.().then(wp => {
-            if (wp && wp !== this.activeWallpaper) {
-              this.activeWallpaper = wp;
-              this.setWallpaper(wp, false);
-            }
-          }).catch(() => {});
+
           window.thaawAPI.onWallpaperUpdated?.((wp) => {
             if (wp && wp !== this.activeWallpaper) {
               this.activeWallpaper = wp;
-              this.setWallpaper(wp, false);
+              this.updateActiveWallpaperUI(wp);
               if (this.renderMyWallpapers) {
                 this.renderMyWallpapers();
               }
             }
           });
+
+          try {
+            const [themeRes, wp] = await Promise.all([
+              window.thaawAPI.getTheme().catch(() => null),
+              window.thaawAPI.getWallpaper?.().catch(() => null)
+            ]);
+            const activeWp = wp || 'default';
+            this.activeWallpaper = activeWp;
+            this.updateActiveWallpaperUI(activeWp);
+            if (themeRes) {
+              this.apply(themeRes.theme, themeRes.preset, false);
+            }
+          } catch (_) {}
+        } else {
+          const savedWp = localStorage.getItem('thaaw_active_wallpaper') || 'default';
+          this.setWallpaper(savedWp, false);
         }
 
         const savedTrans = localStorage.getItem('thaaw_wallpaper_transition');
@@ -1085,8 +1092,6 @@
         const savedDur = localStorage.getItem('thaaw_wallpaper_transition_duration');
         if (savedDur) this.transitionDuration = parseInt(savedDur, 10);
 
-        const savedWp = localStorage.getItem('thaaw_active_wallpaper') || 'default';
-        this.setWallpaper(savedWp, false);
         setTimeout(() => { this.isInitialLoad = false; }, 250);
 
         this.setupPresetCards();
@@ -1123,14 +1128,9 @@
           themeBtn.innerHTML = window.getSvgIcon(icon, 18);
         }
 
-        // Automatically switch wallpaper to theme-appropriate wallpaper when theme is switched
-        const isCurrentLight = Boolean(this.activeWallpaper && (this.activeWallpaper.startsWith('light') || this.activeWallpaper.includes('light/')));
-        if (!this.activeWallpaper || this.activeWallpaper === 'default' || (this.theme === 'light' && !isCurrentLight) || (this.theme === 'dark' && isCurrentLight)) {
-          const nextWp = this.theme === 'light' ? 'light-13' : 'midnight-mountains';
-          this.setWallpaper(nextWp, true);
-        } else {
-          this.applyWallpaperToDOM(this.activeWallpaper);
-        }
+        // Theme switching must never replace, reset, or remove user's custom wallpaper.
+        // Wallpaper preference remains independent of theme changes.
+        this.applyWallpaperToDOM(this.activeWallpaper);
 
         // Dynamically update weather icon based on theme mode
         if (window.WeatherState && WeatherState.updateWeatherIcon) {
@@ -2178,19 +2178,39 @@
         { title: 'ChatGPT', url: 'https://chatgpt.com' }
       ],
 
-      init() {
+      async init() {
+        if (window.thaawAPI?.getSettings) {
+          try {
+            const settings = await window.thaawAPI.getSettings();
+            if (settings && Array.isArray(settings.shortcuts) && settings.shortcuts.length) {
+              this.shortcuts = settings.shortcuts;
+              this.render();
+            }
+          } catch (_e) {}
+        }
         const saved = localStorage.getItem('thaaw_user_shortcuts');
-        if (saved) {
+        if (saved && (!this.shortcuts || !this.shortcuts.length)) {
           try {
             const parsed = JSON.parse(saved);
             if (Array.isArray(parsed) && parsed.length) this.shortcuts = parsed;
           } catch (_e) {}
         }
+        if (window.thaawAPI?.onShortcutsUpdated) {
+          window.thaawAPI.onShortcutsUpdated((scList) => {
+            if (Array.isArray(scList) && scList.length) {
+              this.shortcuts = scList;
+              this.render();
+            }
+          });
+        }
         this.render();
       },
 
       save() {
-        localStorage.setItem('thaaw_user_shortcuts', JSON.stringify(this.shortcuts));
+        try { localStorage.setItem('thaaw_user_shortcuts', JSON.stringify(this.shortcuts)); } catch (_) {}
+        if (window.thaawAPI?.updateSettings) {
+          window.thaawAPI.updateSettings({ shortcuts: this.shortcuts }).catch(() => {});
+        }
         this.render();
       },
 
@@ -2295,17 +2315,20 @@
       }
     };
 
-    // 4. BRAVE-INSPIRED NEWS ENGINE (For You, Following, Channels, Publishers, RSS & Clusters)
+    // 4. UNIFIED LIVE NEWS ENGINE (Real Public APIs, RSS/Atom Feeds, Skeletons, Auto-Refresh & Caching)
     const NewsState = {
       currentView: 'for_you',
       category: 'all',
       articles: [],
       carouselIndex: 0,
       carouselTimer: null,
+      refreshTimer: null,
       isPaused: false,
       page: 1,
       hasMore: true,
       isLoading: false,
+      lastFetchedAt: 0,
+      isCached: false,
       followState: { followedPublishers: [], followedChannels: [], hiddenPublishers: [], hiddenTopics: [] },
       customFeeds: [],
 
@@ -2315,6 +2338,7 @@
         this.setupCarouselEvents();
         this.setupEndlessScroll();
         this.setupRssModal();
+        this.setupAutoRefresh();
 
         // Load follow state if available
         if (window.thaawAPI && window.thaawAPI.getNewsFollowState) {
@@ -2323,11 +2347,11 @@
           } catch (_e) {}
         }
 
-        document.getElementById('refreshNewsBtn')?.addEventListener('click', () => this.fetchNews(true));
+        document.getElementById('refreshNewsBtn')?.addEventListener('click', () => this.fetchNews(true, true));
         document.getElementById('loadMoreNewsBtn')?.addEventListener('click', () => this.loadMore());
 
         // Instant startup: immediately render from local cache if present
-        const cached = localStorage.getItem('thaaw_news_cache_' + this.currentView);
+        const cached = localStorage.getItem('thaaw_news_cache_' + this.category);
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
@@ -2339,7 +2363,33 @@
           } catch (_e) {}
         }
 
-        await this.fetchNews(true);
+        await this.fetchNews(true, false);
+      },
+
+      setupAutoRefresh() {
+        if (this.refreshTimer) clearInterval(this.refreshTimer);
+
+        // 5-minute background refresh interval when tab is active
+        this.refreshTimer = setInterval(() => {
+          if (document.visibilityState === 'visible' && !this.isLoading) {
+            this.fetchNews(false, false);
+          }
+        }, 5 * 60 * 1000);
+
+        // Refresh when returning to tab after being backgrounded for >5 minutes
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') {
+            const staleThreshold = 5 * 60 * 1000;
+            if (Date.now() - (this.lastFetchedAt || 0) > staleThreshold && !this.isLoading) {
+              this.fetchNews(false, false);
+            }
+          }
+        });
+
+        window.addEventListener('beforeunload', () => {
+          if (this.refreshTimer) clearInterval(this.refreshTimer);
+          if (this.carouselTimer) clearInterval(this.carouselTimer);
+        });
       },
 
       setupViewTabs() {
@@ -2360,7 +2410,7 @@
               };
               heading.textContent = labels[this.currentView] || 'Top Stories';
             }
-            this.fetchNews(true);
+            this.fetchNews(true, false);
           });
         });
       },
@@ -2371,7 +2421,7 @@
             document.querySelectorAll('.category-pill').forEach(p => p.classList.remove('active'));
             pill.classList.add('active');
             this.category = pill.dataset.category || 'all';
-            this.fetchNews(true);
+            this.fetchNews(true, false);
           });
         });
       },
@@ -2442,7 +2492,7 @@
                 urlInput.value = '';
                 if (nameInput) nameInput.value = '';
                 await this.renderCustomFeedsList();
-                this.fetchNews(true);
+                this.fetchNews(true, true);
               } else {
                 statusEl.style.color = '#EF4444';
                 statusEl.textContent = res?.error || 'Failed to parse RSS feed.';
@@ -2490,7 +2540,7 @@
               await window.thaawAPI.deleteCustomRssFeed(f.id);
             }
             item.remove();
-            this.fetchNews(true);
+            this.fetchNews(true, true);
           });
           container.appendChild(item);
         });
@@ -2501,7 +2551,7 @@
         if (!chipsContainer) return;
         chipsContainer.innerHTML = '';
 
-        const standardChannels = ['Technology', 'Security', 'AI', 'Open Source', 'Programming', 'Science', 'World'];
+        const standardChannels = ['Technology', 'Security', 'AI', 'Open Source', 'Programming', 'Science', 'World', 'Articles'];
         let followState = { followedChannels: [] };
         try {
           if (window.thaawAPI && window.thaawAPI.getNewsFollowState) {
@@ -2519,105 +2569,238 @@
             if (window.thaawAPI && window.thaawAPI.toggleFollowChannel) {
               await window.thaawAPI.toggleFollowChannel(ch);
               await this.renderFollowedChannels();
-              this.fetchNews(true);
+              this.fetchNews(true, false);
             }
           });
           chipsContainer.appendChild(chip);
         });
       },
 
-      async fetchNews(reset = true) {
+      async fetchNews(reset = true, forceRefresh = false) {
+        if (this.isLoading && !forceRefresh) return;
+
+        const refreshBtn = document.getElementById('refreshNewsBtn');
+        if (refreshBtn) refreshBtn.classList.add('spinning');
+
         if (reset) {
           this.page = 1;
-          this.articles = [];
           this.hasMore = true;
-          const grid = document.getElementById('newsCardsGrid');
-          if (grid && !this.articles.length) {
-            grid.innerHTML = '<div class="news-empty-state"><span data-icon="refresh-cw" data-icon-size="20"></span><p>Fetching real headlines & stories...</p></div>';
-            if (window.getSvgIcon) {
-              grid.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = window.getSvgIcon('refresh-cw', 20));
-            }
+          if (!this.articles.length) {
+            this.renderSkeletons();
           }
         }
 
         this.isLoading = true;
+        let errorMessage = '';
+        let isRateLimited = false;
+
         try {
           let incoming = [];
           if (window.thaawAPI && window.thaawAPI.getNews) {
-            const res = await window.thaawAPI.getNews(this.category, this.page, this.currentView);
-            incoming = res && res.articles ? res.articles : [];
-            this.hasMore = res ? !!res.hasMore : false;
+            const res = await window.thaawAPI.getNews(this.category, this.page, this.currentView, forceRefresh);
+            if (res) {
+              incoming = res.articles || [];
+              this.hasMore = !!res.hasMore;
+              this.lastFetchedAt = res.fetchedAt || Date.now();
+              this.isCached = !!res.isCached;
+              isRateLimited = !!res.rateLimited;
+              if (res.error) errorMessage = res.error;
+            }
           } else {
-            // Standalone fallback
-            incoming = [
-              { id: '1', title: 'Hardened Browsers: Memory Safety Standards in 2026', source: 'Wired Security', category: 'SECURITY', platform: 'security', timestamp: '18m ago', url: 'https://wired.com', snippet: 'Zero-trust architecture and sandboxed origin models lead modern desktop security.', imageUrl: 'https://images.unsplash.com/photo-1563986768609-322da13575f3?w=600&auto=format&fit=crop&q=80', isCluster: true, relatedSources: ['Ars Technica', 'The Hacker News'] },
-              { id: '2', title: 'Open Source Community Adopts Unified Privacy Manifest for Native Web Apps', source: 'r/programming', category: 'REDDIT', platform: 'reddit', timestamp: '42m ago', url: 'https://reddit.com/r/programming', snippet: 'Developers celebrate transparent tracker-free specifications across frameworks.', imageUrl: 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=600&auto=format&fit=crop&q=80' },
-              { id: '3', title: 'Decentralized Video & Audio Streaming Standards Reach Final Candidate Release', source: 'YouTube Tech', category: 'YOUTUBE', platform: 'youtube', timestamp: '1h ago', url: 'https://youtube.com', snippet: 'Next-generation codecs and zero-latency peer streaming protocols benchmarked.', imageUrl: 'https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?w=600&auto=format&fit=crop&q=80' },
-              { id: '4', title: 'Autonomous Multi-Agent AI Frameworks Standardized for Distributed Work', source: 'Ars Technica', category: 'AI', platform: 'article', timestamp: '2h ago', url: 'https://arstechnica.com', snippet: 'Engineers highlight deterministic tool invocation and local security sandboxing.', imageUrl: 'https://images.unsplash.com/photo-1677442136019-21780ecad995?w=600&auto=format&fit=crop&q=80', isCluster: true, relatedSources: ['TechCrunch', 'The Verge'] }
-            ];
+            // Standalone live fetch fallback using real public CORS-enabled APIs
+            incoming = await this.fetchStandaloneLive(this.category);
             this.hasMore = false;
+            this.lastFetchedAt = Date.now();
+            this.isCached = false;
           }
 
           // Filter out hidden topics or publishers
-          if (this.followState) {
+          if (this.followState && incoming.length > 0) {
             const hiddenPubs = (this.followState.hiddenPublishers || []).map(s => s.toLowerCase());
             const hiddenTops = (this.followState.hiddenTopics || []).map(t => t.toLowerCase());
             incoming = incoming.filter(a => {
-              if (a.source && hiddenPubs.includes(a.source.toLowerCase())) return false;
-              if (a.category && hiddenTops.includes(a.category.toLowerCase())) return false;
+              const src = (a.sourceName || a.source || '').toLowerCase();
+              const cat = (a.category || '').toLowerCase();
+              if (src && hiddenPubs.some(p => src.includes(p))) return false;
+              if (cat && hiddenTops.some(t => cat.includes(t))) return false;
               return true;
             });
           }
 
           if (reset) {
-            this.articles = incoming;
-            if (this.articles.length === 0) {
-              this.renderEmptyState();
-            } else {
-              // Cache for instant startup
+            if (incoming.length > 0) {
+              this.articles = incoming;
               try {
-                localStorage.setItem('thaaw_news_cache_' + this.currentView, JSON.stringify(incoming.slice(0, 10)));
+                localStorage.setItem('thaaw_news_cache_' + this.category, JSON.stringify(incoming.slice(0, 16)));
               } catch (_e) {}
               this.carouselIndex = 0;
               this.renderCarousel();
               this.renderCardsGrid(true);
               this.startAutoSlide();
+            } else if (this.articles.length > 0) {
+              // Keep existing articles if fetch returned 0 (e.g. temporary rate limit or offline)
+              this.renderStatusBanner(errorMessage || 'Using cached news stories.');
+            } else if (isRateLimited) {
+              this.renderRateLimitState(errorMessage);
+            } else {
+              this.renderEmptyState(errorMessage || 'No stories available for this category right now.');
             }
           } else {
             this.articles.push(...incoming);
             this.appendCards(incoming);
           }
 
+          this.updateHeaderFreshness();
+
           const loadMoreBtn = document.getElementById('loadMoreNewsBtn');
           if (loadMoreBtn) {
             loadMoreBtn.style.display = this.hasMore ? 'inline-flex' : 'none';
           }
-        } catch (_err) {
+        } catch (err) {
+          console.warn('[THAAW News] Error fetching news:', err);
           if (reset && !this.articles.length) {
-            this.renderEmptyState('News unavailable right now. Check connection.');
+            this.renderEmptyState('News connection unavailable. Please check your network.');
+          } else if (this.articles.length > 0) {
+            this.renderStatusBanner('Network unavailable. Retaining cached stories.');
           }
         } finally {
           this.isLoading = false;
+          if (refreshBtn) refreshBtn.classList.remove('spinning');
         }
+      },
+
+      async fetchStandaloneLive(cat) {
+        const results = [];
+        try {
+          if (cat === 'opensource' || cat === 'all') {
+            const gh = await fetch('https://api.github.com/search/repositories?q=topic:opensource&sort=updated&per_page=12')
+              .then(r => r.json()).catch(() => ({ items: [] }));
+            (gh.items || []).forEach(repo => {
+              results.push({
+                id: 'gh_' + repo.id,
+                title: repo.full_name + ': ' + (repo.description || 'Open source repository'),
+                url: repo.html_url,
+                sourceName: 'GitHub • ' + (repo.owner?.login || 'Open Source'),
+                source: 'GitHub • ' + (repo.owner?.login || 'Open Source'),
+                sourceType: 'github',
+                platform: 'opensource',
+                category: 'OPEN SOURCE',
+                publishedAt: repo.updated_at,
+                timestamp: 'Recently updated',
+                author: repo.owner?.login,
+                score: (repo.stargazers_count || 0) + ' stars',
+                stars: repo.stargazers_count || 0,
+                image: repo.owner?.avatar_url || 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=600&auto=format&fit=crop&q=80',
+                imageUrl: repo.owner?.avatar_url || 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=600&auto=format&fit=crop&q=80',
+                description: `${repo.description || ''} (${(repo.stargazers_count || 0).toLocaleString()} stars • ${repo.language || 'Code'})`
+              });
+            });
+          }
+
+          if (cat === 'ai' || cat === 'all' || cat === 'technology' || cat === 'articles') {
+            const query = cat === 'ai' ? 'artificial intelligence' : 'technology';
+            const hn = await fetch(`https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=12`)
+              .then(r => r.json()).catch(() => ({ hits: [] }));
+            (hn.hits || []).forEach(hit => {
+              results.push({
+                id: 'hn_' + hit.objectID,
+                title: hit.title,
+                url: hit.url || ('https://news.ycombinator.com/item?id=' + hit.objectID),
+                sourceName: 'Hacker News',
+                source: 'Hacker News',
+                sourceType: 'article',
+                platform: 'article',
+                category: cat.toUpperCase(),
+                publishedAt: hit.created_at,
+                timestamp: 'Recent',
+                author: hit.author,
+                score: (hit.points || 0) + ' pts',
+                image: 'https://images.unsplash.com/photo-1518770660439-4636190af475?w=600&auto=format&fit=crop&q=80',
+                imageUrl: 'https://images.unsplash.com/photo-1518770660439-4636190af475?w=600&auto=format&fit=crop&q=80',
+                description: `${hit.points || 0} points • ${hit.num_comments || 0} comments • posted by ${hit.author}`
+              });
+            });
+          }
+        } catch (_e) {}
+        return results;
+      },
+
+      updateHeaderFreshness() {
+        const badge = document.getElementById('newsLiveBadge');
+        if (badge) {
+          if (this.isCached) {
+            badge.textContent = 'CACHED';
+            badge.style.background = 'rgba(245, 158, 11, 0.2)';
+            badge.style.color = '#f59e0b';
+            badge.style.borderColor = 'rgba(245, 158, 11, 0.3)';
+          } else {
+            badge.textContent = 'LIVE';
+            badge.style.background = '';
+            badge.style.color = '';
+            badge.style.borderColor = '';
+          }
+        }
+
+        const subtitle = document.querySelector('.news-fullpage-subtitle');
+        if (subtitle && this.lastFetchedAt) {
+          const diffMins = Math.floor((Date.now() - this.lastFetchedAt) / 60000);
+          const timeText = diffMins < 1 ? 'just now' : `${diffMins}m ago`;
+          subtitle.textContent = `Updated ${timeText} • Real-time headlines, developer updates, and world discoveries`;
+        }
+      },
+
+      renderSkeletons() {
+        const grid = document.getElementById('newsCardsGrid');
+        if (!grid) return;
+        let html = '';
+        for (let i = 0; i < 8; i++) {
+          html += `
+            <div class="news-card-skeleton">
+              <div class="skeleton-shimmer"></div>
+              <div class="skeleton-img"></div>
+              <div class="skeleton-body">
+                <div class="skeleton-line w-80"></div>
+                <div class="skeleton-line w-60"></div>
+                <div class="skeleton-line w-40" style="margin-top: auto;"></div>
+              </div>
+            </div>
+          `;
+        }
+        grid.innerHTML = html;
+      },
+
+      renderStatusBanner(msg) {
+        const grid = document.getElementById('newsCardsGrid');
+        if (!grid) return;
+        const existing = grid.querySelector('.news-status-banner');
+        if (existing) existing.remove();
+
+        const banner = document.createElement('div');
+        banner.className = 'news-status-banner';
+        banner.innerHTML = `
+          <span>${msg}</span>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="NewsState.fetchNews(true, true)" style="font-size: 11px; padding: 2px 8px;">Refresh</button>
+        `;
+        grid.prepend(banner);
       },
 
       async loadMore() {
         if (this.isLoading || !this.hasMore) return;
         this.page++;
-        await this.fetchNews(false);
+        await this.fetchNews(false, false);
       },
 
       renderCarousel() {
         if (!this.articles.length) return;
         const art = this.articles[this.carouselIndex % this.articles.length];
-        
+
         const catEl = document.getElementById('carouselCategory');
         if (catEl) {
           const catName = art.platform ? art.platform.toUpperCase() : (art.category || 'TECH');
           catEl.textContent = catName;
           catEl.className = `news-category-badge cat-${(art.platform || art.category || 'tech').toLowerCase().replace(/\s+/g, '-')}`;
         }
-        
+
         const timeEl = document.getElementById('carouselTimestamp');
         if (timeEl) timeEl.textContent = art.timestamp || 'Recent';
 
@@ -2625,15 +2808,26 @@
         if (titleEl) {
           titleEl.textContent = art.title;
           titleEl.href = art.url;
+          titleEl.onclick = (e) => {
+            if (!e.ctrlKey && !e.metaKey && e.button === 0) {
+              e.preventDefault();
+              if (window.HomePageState && window.HomePageState.navigate) {
+                window.HomePageState.navigate(art.url);
+              } else {
+                window.location.href = art.url;
+              }
+            }
+          };
         }
 
         const srcEl = document.getElementById('carouselSource');
-        if (srcEl) srcEl.textContent = art.source || 'News';
+        if (srcEl) srcEl.textContent = art.sourceName || art.source || 'News';
 
         // Featured background image
         const slideViewport = document.getElementById('carouselSlide');
-        if (slideViewport && art.imageUrl) {
-          slideViewport.style.backgroundImage = `linear-gradient(180deg, rgba(7, 17, 31, 0.4) 0%, rgba(7, 17, 31, 0.85) 100%), url("${art.imageUrl}")`;
+        const imgUrl = art.image || art.imageUrl;
+        if (slideViewport && imgUrl) {
+          slideViewport.style.backgroundImage = `linear-gradient(180deg, rgba(7, 17, 31, 0.4) 0%, rgba(7, 17, 31, 0.85) 100%), url("${imgUrl}")`;
           slideViewport.style.backgroundSize = 'cover';
           slideViewport.style.backgroundPosition = 'center';
         }
@@ -2676,10 +2870,10 @@
           card.target = '_blank';
           card.rel = 'noreferrer';
 
-          const imgSrc = art.imageUrl || defaultFallbackImage;
+          const imgSrc = art.image || art.imageUrl || defaultFallbackImage;
           const imgSnippet = `
             <div class="news-card-img-wrap">
-              <img class="news-card-img" src="${imgSrc}" alt="" loading="lazy" onerror="this.src='${defaultFallbackImage}'" />
+              <img class="news-card-img" src="${imgSrc}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${defaultFallbackImage}';" />
             </div>
           `;
 
@@ -2689,24 +2883,67 @@
           } catch (_) {}
           const faviconUrl = pubDomain ? `https://www.google.com/s2/favicons?domain=${pubDomain}&sz=32` : '';
 
+          const sourceDisplayName = art.sourceName || art.source || 'News';
+          const platformType = (art.sourceType || art.platform || 'article').toUpperCase();
+          const badgeText = platformType === 'ARTICLE' ? (art.category || 'NEWS') : platformType;
+          const displayTime = art.timestamp || 'Recent';
+
+          let descSnippet = '';
+          if (art.description && art.description.trim().length > 0) {
+            descSnippet = `<p class="news-card-desc">${art.description}</p>`;
+          }
+
           card.innerHTML = `
             ${imgSnippet}
             <div class="news-content">
               <h4 class="news-title">${art.title}</h4>
+              ${descSnippet}
               <div class="news-publisher-row">
                 ${faviconUrl ? `<img class="news-publisher-icon" src="${faviconUrl}" alt="" loading="lazy" onerror="this.style.display='none'" />` : ''}
-                <span class="news-publisher-name">${art.source || 'News'}</span>
+                <span class="news-publisher-name">${sourceDisplayName}</span>
+                <span class="news-card-time">${displayTime}</span>
+                <span class="news-card-badge">${badgeText}</span>
               </div>
             </div>
           `;
 
+          // Standard browser navigation on left click without meta/ctrl keys
+          card.addEventListener('click', (e) => {
+            if (!e.ctrlKey && !e.metaKey && e.button === 0) {
+              e.preventDefault();
+              if (window.HomePageState && window.HomePageState.navigate) {
+                window.HomePageState.navigate(art.url);
+              } else {
+                window.location.href = art.url;
+              }
+            }
+          });
+
           card.addEventListener('contextmenu', (e) => {
             e.preventDefault();
-            ContextMenu.openForNews(e.clientX, e.clientY, art);
+            if (window.ContextMenu && window.ContextMenu.openForNews) {
+              ContextMenu.openForNews(e.clientX, e.clientY, art);
+            }
           });
 
           grid.appendChild(card);
         });
+      },
+
+      renderRateLimitState(msg = '') {
+        const grid = document.getElementById('newsCardsGrid');
+        if (!grid) return;
+        grid.innerHTML = `
+          <div class="news-empty-state">
+            <span data-icon="alert-circle" data-icon-size="28" style="color: #f59e0b;"></span>
+            <h4>Source Temporarily Rate-Limited</h4>
+            <p>${msg || 'Public feed requests are rate-limited. Please retry in a few moments.'}</p>
+            <button type="button" class="btn btn-primary btn-sm" onclick="NewsState.fetchNews(true, true)" style="margin-top: 8px;">Retry Now</button>
+          </div>
+        `;
+        if (window.getSvgIcon) {
+          grid.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = window.getSvgIcon('alert-circle', 28) || window.getSvgIcon('info', 28) || window.getSvgIcon('refresh-cw', 28));
+        }
       },
 
       renderEmptyState(msg = 'News unavailable right now.') {
@@ -2716,8 +2953,8 @@
           <div class="news-empty-state">
             <span data-icon="wifi-off" data-icon-size="28" style="color: var(--thaaw-cyan);"></span>
             <h4>${msg}</h4>
-            <p>Could not fetch external news feeds.</p>
-            <button type="button" class="btn btn-primary btn-sm" onclick="NewsState.fetchNews(true)" style="margin-top: 8px;">Retry</button>
+            <p>Could not fetch live news feeds.</p>
+            <button type="button" class="btn btn-primary btn-sm" onclick="NewsState.fetchNews(true, true)" style="margin-top: 8px;">Retry</button>
           </div>
         `;
         if (window.getSvgIcon) {

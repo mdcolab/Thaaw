@@ -219,7 +219,8 @@ export class PwaManager {
             `Exec=${execPath} --app=${pwa.startUrl}`,
             'Terminal=false',
             'Categories=Network;WebBrowser;',
-            'StartupWMClass=thaaw-browser'
+            'Icon=thaaw-browser',
+            `StartupWMClass=thaaw-pwa-${pwa.id}`
           ].join('\n');
           fs.writeFileSync(desktopFile, desktopContent, { encoding: 'utf8', mode: 0o755 });
         }

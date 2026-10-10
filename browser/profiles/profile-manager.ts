@@ -350,7 +350,13 @@ export class ProfileManager {
       showWeather: true,
       showNews: true,
       showBookmarksBar: false,
-      adBlockerEnabled: true
+      adBlockerEnabled: true,
+      shortcuts: [
+        { title: 'DuckDuckGo', url: 'https://duckduckgo.com' },
+        { title: 'Wikipedia', url: 'https://wikipedia.org' },
+        { title: 'GitHub', url: 'https://github.com' },
+        { title: 'Internet Archive', url: 'https://archive.org' }
+      ]
     };
 
     try {
@@ -432,4 +438,5 @@ export interface ProfileSettings {
   showNews?: boolean;
   showBookmarksBar?: boolean;
   adBlockerEnabled?: boolean;
+  shortcuts?: Array<{ title: string; url: string; icon?: string }>;
 }

@@ -1393,7 +1393,7 @@
     }
 
     // 3. Theme & Preset Application
-    function selectThemePreset(theme, preset) {
+    function selectThemePreset(theme, preset, save = true) {
       document.documentElement.setAttribute('data-theme', theme);
       document.documentElement.setAttribute('data-theme-preset', preset);
       
@@ -1402,7 +1402,7 @@
         card.classList.toggle('active', isMatch);
       });
 
-      if (window.thaawAPI?.setTheme) {
+      if (save && window.thaawAPI?.setTheme) {
         window.thaawAPI.setTheme(theme, preset);
       }
     }
@@ -1898,11 +1898,12 @@
       const cleanActive = String(activeWp || '').replace(/^thaaw-/, '').replace(/\.webp$/, '');
       const list = WALLPAPERS_30.filter(w => currentSettingsWpFilter === 'all' || w.mode === currentSettingsWpFilter);
 
+      const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
       list.forEach(wp => {
         const cleanWp = wp.id.replace(/^thaaw-/, '').replace(/\.webp$/, '');
         const isMatch = (
           cleanWp === cleanActive ||
-          ((!activeWp || activeWp === 'default') && wp.id === 'midnight-mountains')
+          ((!activeWp || activeWp === 'default') && (currentTheme === 'light' ? wp.id === 'light-13' : wp.id === 'midnight-mountains'))
         );
         const card = document.createElement('div');
         card.className = `wallpaper-card-15 ${isMatch ? 'active' : ''}`;
@@ -1973,9 +1974,15 @@
           renderSettingsWallpapers();
         }
       });
+      window.thaawAPI?.onThemeUpdated?.((data) => {
+        if (data && data.theme) {
+          selectThemePreset(data.theme, data.preset || 'midnight', false);
+          renderSettingsWallpapers();
+        }
+      });
       if (window.thaawAPI?.getTheme) {
         window.thaawAPI.getTheme().then(t => {
-          if (t) selectThemePreset(t.theme, t.preset || 'midnight');
+          if (t) selectThemePreset(t.theme, t.preset || 'midnight', false);
         }).catch(() => {});
       }
       if (window.thaawAPI?.getSettings) {

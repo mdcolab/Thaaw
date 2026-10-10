@@ -88,7 +88,7 @@ const thaawAPI = {
     ipcRenderer.invoke('tab:autofill-active', cred),
 
   // News Provider & Reader
-  getNews: (category?: string, page?: number, view?: string) => ipcRenderer.invoke('news:get', category, page, view),
+  getNews: (category?: string, page?: number, view?: string, forceRefresh?: boolean) => ipcRenderer.invoke('news:get', category, page, view, forceRefresh),
   getCustomRssFeeds: () => ipcRenderer.invoke('news:get-rss-feeds'),
   addCustomRssFeed: (url: string, name: string, category: string) => ipcRenderer.invoke('news:add-rss-feed', { url, name, category }),
   deleteCustomRssFeed: (id: string) => ipcRenderer.invoke('news:delete-rss-feed', id),
@@ -221,6 +221,12 @@ const thaawAPI = {
     const handler = (_event: unknown, data: { engine: string; label: string }) => callback(data);
     ipcRenderer.on('browser:engine-updated', handler);
     return () => ipcRenderer.removeListener('browser:engine-updated', handler);
+  },
+
+  onShortcutsUpdated: (callback: (shortcuts: unknown[]) => void) => {
+    const handler = (_event: unknown, shortcuts: unknown[]) => callback(shortcuts);
+    ipcRenderer.on('browser:shortcuts-updated', handler);
+    return () => ipcRenderer.removeListener('browser:shortcuts-updated', handler);
   },
 
   onToggleSidebar: (callback: () => void) => {
