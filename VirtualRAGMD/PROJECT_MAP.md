@@ -1,7 +1,7 @@
 # Project Map
 
-Generated: 2026-10-10T04:56:51+00:00
-Indexed files: 101
+Generated: 2026-10-10T08:23:37+00:00
+Indexed files: 102
 
 ## Languages
 
@@ -9,7 +9,7 @@ Indexed files: 101
 - `md`: 17 file(s)
 - `html`: 13 file(s)
 - `svg`: 11 file(s)
-- `json`: 6 file(s)
+- `json`: 7 file(s)
 - `css`: 3 file(s)
 - `js`: 3 file(s)
 - `mjs`: 2 file(s)
@@ -33,6 +33,7 @@ Indexed files: 101
 - `package-lock.json` (2505 lines) — {
 - `package.json` (39 lines) — {
 - `tsconfig.json` (26 lines) — {
+- `vercel.json` (5 lines) — {
 ### `.github/`
 - `pull_request_template.md` (21 lines) — - [ ] No security-sensitive changes
 ### `scratch/`
@@ -48,7 +49,7 @@ Indexed files: 101
 - `bug_report.md` (30 lines) — name: Bug Report
 - `feature_request.md` (20 lines) — name: Feature Request
 ### `.github/workflows/`
-- `ci.yml` (43 lines) — name: CI
+- `ci.yml` (44 lines) — name: CI
 - `security.yml` (32 lines) — name: Security Audit
 ### `assets/branding/`
 - `branding-tokens.json` (54 lines) — {

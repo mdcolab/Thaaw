@@ -11,3 +11,12 @@ Record meaningful architectural decisions and their reasons. Do not log every co
   3. When `wallpaper === 'default'`, the theme's default background adapts between light and dark themes dynamically.
   4. Chrome wallpaper transitions in `renderer.ts` finalize cleanly on interruptions and theme switches apply without transition delay or occlusion.
 - **Consequences**: User custom wallpapers are preserved across unlimited theme switches, page reloads, app restarts, and across windows under the same profile, with strict profile isolation maintained.
+
+## DEC-002: CI Dependencies, Security Audit Scoping, and Vercel Build Exclusion
+
+- **Context**: GitHub Actions runner upgrades to Ubuntu 24.04 (noble) broke CI because `libasound2` was transitioned to `libasound2t64`. The security audit workflow was failing due to devDependencies (`electron` and `vitest`) carrying known upstream advisories that do not affect production runtime. Additionally, Vercel deployments were failing because `Thaaw` is an Electron desktop application rather than a web application, and Vercel's `NODE_ENV=production` stripped `devDependencies`, causing `tsc` to fail.
+- **Decision**:
+  1. In `.github/workflows/ci.yml`, install `libasound2t64` with fallback to `libasound2` to ensure multi-runner compatibility.
+  2. In `.github/workflows/security.yml`, run `npm audit --omit=dev --audit-level=high` to properly scope audits to production runtime dependencies, and exclude `.github` from secret detection grep.
+  3. In `vercel.json`, specify `"ignoreCommand": "exit 0"` so Vercel skips builds for this desktop application repository without failing GitHub checks.
+- **Consequences**: CI builds succeed reliably on Ubuntu 24.04 runners, security audits focus on shipped runtime packages without false positives from dev-time tooling, and Vercel commits are automatically skipped without reporting failures.

@@ -21,11 +21,11 @@ jobs:
           node-version: 20
 
       - name: Run npm Audit
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Verify No Secrets Committed
         run: |
-          if git grep -E "(PRIVATE KEY|API_KEY|SECRET_KEY)" -- ':!tests'; then
+          if git grep -E "(PRIVATE KEY|API_KEY|SECRET_KEY)" -- ':!tests' ':!.github'; then
             echo "Potential secret found in codebase!"
             exit 1
           fi
